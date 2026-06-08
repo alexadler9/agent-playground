@@ -8,7 +8,6 @@ import domain.context.FullHistoryContextBuilder
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -48,7 +47,7 @@ fun main() = runBlocking {
         session = ChatSession(),
         config = AgentConfig(
             model = "deepseek-chat",
-            systemPrompt = "You are a helpful agent. Answer in English. Use the current session history",
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
             maxTokens = 1_000,
             temperature = 0.3,
         ),
