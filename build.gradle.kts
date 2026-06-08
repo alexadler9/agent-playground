@@ -1,16 +1,28 @@
 plugins {
-    kotlin("jvm") version "2.2.21"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.application)
 }
 
-group = "org.example"
+group = "dev.alexadler9.agent"
 version = "1.0-SNAPSHOT"
 
-repositories {
-    mavenCentral()
+application {
+    mainClass.set("MainKt")
+    applicationName = "agent-playground"
 }
 
 dependencies {
-    testImplementation(kotlin("test"))
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
+
+    implementation(libs.retrofit.core)
+    implementation(libs.okhttp.core)
+    implementation(libs.retrofit.kotlinx.serialization.converter)
+
+    testImplementation(libs.kotest.runner.junit5)
+    testImplementation(libs.kotest.assertions.core)
+    testImplementation(libs.mockk)
 }
 
 kotlin {
@@ -19,4 +31,13 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.withType<JavaExec> {
+    systemProperty("file.encoding", "UTF-8")
+    jvmArgs(
+        "-Dfile.encoding=UTF-8",
+        "-Dsun.stdout.encoding=UTF-8",
+        "-Dsun.stderr.encoding=UTF-8",
+    )
 }
