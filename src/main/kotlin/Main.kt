@@ -12,6 +12,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import presentation.cli.AgentCli
 import retrofit2.Retrofit
 import java.time.Duration
 
@@ -43,7 +44,7 @@ fun main() = runBlocking {
         apiKey = AppConfig.apiKey,
     )
 
-    val agent = AgentService(
+    val agentService = AgentService(
         session = ChatSession(),
         config = AgentConfig(
             model = "deepseek-chat",
@@ -57,28 +58,17 @@ fun main() = runBlocking {
     )
 
     try {
-        val firstReply = agent.sendMessage(
-            "My name is Alexandra. I am designing a small agent for an AI course"
-        )
-
-        println("Assistant:")
-        println(firstReply.message.content)
-
-        val secondReply = agent.sendMessage(
-            "What is my name and what am I designing?"
-        )
-
-        println()
-        println("Assistant:")
-        println(secondReply.message.content)
-
-        println()
-        println("History:")
-        agent.getHistory().forEach { message ->
-            println("${message.role}: ${message.content}")
-        }
+        AgentCli(
+            agentService = agentService,
+        ).start()
     } finally {
         okHttpClient.dispatcher.executorService.shutdown()
         okHttpClient.connectionPool.evictAll()
     }
 }
+
+private const val DEFAULT_SYSTEM_PROMPT =
+    "Ты полезный AI-агент. Отвечай на русском языке. " +
+            "Учитывай историю текущей сессии. " +
+            "Если пользователь спрашивает о данных, которые были в текущем диалоге, используй историю сообщений. " +
+            "Если история была очищена или нужной информации нет в контексте, честно скажи, что не видишь этих данных"

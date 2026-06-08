@@ -33,6 +33,10 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.named<JavaExec>("run") {
+    standardInput = System.`in`
+}
+
 tasks.withType<JavaExec> {
     systemProperty("file.encoding", "UTF-8")
     jvmArgs(
