@@ -1,8 +1,8 @@
 # Agent Playground
 
-Kotlin/JVM CLI application with a simple session-memory AI agent
+Kotlin/JVM CLI application with a simple AI agent that persists session history between app runs
 
-The agent stores user and assistant messages during the current app run and sends this session history to the LLM on each new request
+The agent stores user and assistant messages in a local JSON file, restores them after app restart, and sends the session history to the LLM on each new request
 
 ## Commands
 
@@ -36,8 +36,20 @@ or:
 
 ## Current limitations
 
-* History is stored only in memory
-* Session memory is lost after app restart
-* Long-term memory is not implemented yet
+* History is stored in a local JSON file
+* Only one persisted session is supported for now
+* Long-term structured memory is not implemented yet
 * CLI is the only presentation layer for now
 * The current context builder sends the full session history
+
+## Persistent history
+
+Session history is saved to:
+
+```text
+storage/session-history.json
+```
+
+The storage/ directory is ignored by Git because it contains local runtime data
+
+After app restart, the agent loads the saved messages and continues the conversation with the previous context
