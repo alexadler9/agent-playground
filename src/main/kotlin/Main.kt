@@ -2,7 +2,7 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
-import data.memory.InMemorySessionHistoryRepository
+import data.memory.JsonSessionHistoryRepository
 import domain.agent.AgentService
 import domain.context.FullHistoryContextBuilder
 import domain.model.AgentConfig
@@ -13,6 +13,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import presentation.cli.AgentCli
 import retrofit2.Retrofit
+import java.nio.file.Path
 import java.time.Duration
 
 fun main() = runBlocking {
@@ -51,7 +52,10 @@ fun main() = runBlocking {
             maxTokens = 1_000,
             temperature = 0.3,
         ),
-        historyRepository = InMemorySessionHistoryRepository(),
+        historyRepository = JsonSessionHistoryRepository(
+            storageFile = Path.of("storage", "session-history.json"),
+            json = json,
+        ),
         contextBuilder = FullHistoryContextBuilder(),
         llmGateway = llmGateway,
     )
