@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 class AgentCli(
     private val agentService: AgentService,
     private val consoleInput: ConsoleInput = ConsoleInput(),
+    private val stressTextBuilder: ProjectFilesStressTextBuilder = ProjectFilesStressTextBuilder(),
 ) {
 
     suspend fun start() {
@@ -39,6 +40,10 @@ class AgentCli(
                     println("История текущей сессии очищена")
                 }
 
+                input.startsWith(STRESS_CONTEXT_COMMAND) -> {
+                    sendStressContext(input)
+                }
+
                 else -> {
                     sendMessage(input)
                 }
@@ -63,9 +68,21 @@ class AgentCli(
             println("Агент:")
             println(reply.message.content)
 
-            reply.tokenUsage?.totalTokens?.let { totalTokens ->
+            reply.estimatedTokenStats?.let { stats ->
                 println()
-                println("Использовано токенов: $totalTokens")
+                println("Примерная оценка токенов:")
+                println("- Текущий запрос: ${stats.currentRequestTokens}")
+                println("- Сохранённая история: ${stats.storedHistoryTokens}")
+                println("- Контекст, отправленный модели: ${stats.contextTokens}")
+                println("- Сообщений в контексте: ${stats.contextMessageCount}")
+            }
+
+            reply.tokenUsage?.let { usage ->
+                println()
+                println("Реальные токены по данным API:")
+                println("- Prompt tokens: ${usage.promptTokens ?: "неизвестно"}")
+                println("- Completion tokens: ${usage.completionTokens ?: "неизвестно"}")
+                println("- Total tokens: ${usage.totalTokens ?: "неизвестно"}")
             }
 
             reply.responseTimeMs?.let { responseTimeMs ->
@@ -106,8 +123,26 @@ class AgentCli(
         println("Команды:")
         println("$HISTORY_COMMAND — показать историю текущей сессии")
         println("$CLEAR_COMMAND   — очистить историю текущей сессии")
+        println("$STRESS_CONTEXT_COMMAND [repeat] — отправить файлы проекта для stress-test контекста")
         println("$EXIT_COMMAND    — выйти")
         println()
+    }
+
+    private suspend fun sendStressContext(input: String) {
+        val repeatCount = input
+            .substringAfter(" ", missingDelimiterValue = "3")
+            .trim()
+            .toIntOrNull()
+            ?.coerceIn(1, 100)
+            ?: 3
+
+        val stressText = stressTextBuilder.build(repeatCount)
+
+        println("Stress context payload prepared")
+        println("Repeat count: $repeatCount")
+        println("Payload chars: ${stressText.length}")
+
+        sendMessage(stressText)
     }
 
     private fun CoroutineScope.launchThinkingIndicator(): Job {
@@ -146,6 +181,7 @@ class AgentCli(
     private companion object {
         const val HISTORY_COMMAND = "/history"
         const val CLEAR_COMMAND = "/clear"
+        const val STRESS_CONTEXT_COMMAND = "/stress-context"
         const val EXIT_COMMAND = "/exit"
     }
 }

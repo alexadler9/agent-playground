@@ -12,6 +12,16 @@ data class ChatCompletionRequestDto(
     val maxTokens: Int? = null,
 
     val temperature: Double? = null,
+
+    val transforms: List<String>? = null,
+
+    val plugins: List<OpenRouterPluginDto>? = null,
+)
+
+@Serializable
+data class OpenRouterPluginDto(
+    val id: String,
+    val enabled: Boolean? = null,
 )
 
 @Serializable

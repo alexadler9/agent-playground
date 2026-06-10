@@ -8,6 +8,8 @@ import domain.model.AgentReply
 import domain.model.ChatMessage
 import domain.model.ChatRole
 import domain.model.ChatSession
+import domain.model.EstimatedTokenStats
+import domain.token.TokenEstimator
 
 class AgentService(
     private val session: ChatSession,
@@ -15,6 +17,7 @@ class AgentService(
     private val historyRepository: SessionHistoryRepository,
     private val contextBuilder: ContextBuilder,
     private val llmGateway: LlmGateway,
+    private val tokenEstimator: TokenEstimator? = null,
 ) {
 
     suspend fun sendMessage(text: String): AgentReply {
@@ -35,9 +38,22 @@ class AgentService(
             history = history,
         )
 
+        val estimatedTokenStats = tokenEstimator?.let { estimator ->
+            EstimatedTokenStats(
+                currentRequestTokens = estimator.estimateTextTokens(text),
+                storedHistoryTokens = estimator.estimateMessagesTokens(history),
+                contextTokens = estimator.estimateMessagesTokens(context),
+                contextMessageCount = context.size,
+            )
+        }
+
         val reply = llmGateway.sendMessages(
             config = config,
             messages = context,
+        )
+
+        val replyWithStats = reply.copy(
+            estimatedTokenStats = estimatedTokenStats,
         )
 
         historyRepository.appendMessage(
@@ -45,7 +61,7 @@ class AgentService(
             message = reply.message,
         )
 
-        return reply
+        return replyWithStats
     }
 
     suspend fun getHistory(): List<ChatMessage> {

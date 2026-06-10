@@ -1,5 +1,6 @@
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import config.AppConfig
+import data.llm.OpenRouterContextCompressionMode
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
@@ -7,6 +8,7 @@ import domain.agent.AgentService
 import domain.context.FullHistoryContextBuilder
 import domain.model.AgentConfig
 import domain.model.ChatSession
+import domain.token.ApproximateTokenEstimator
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,14 +44,15 @@ fun main() = runBlocking {
     val llmGateway = RetrofitLlmGateway(
         api = api,
         apiKey = AppConfig.apiKey,
+        openRouterContextCompressionMode = OpenRouterContextCompressionMode.ENABLED,
     )
 
     val agentService = AgentService(
         session = ChatSession(),
         config = AgentConfig(
-            model = "deepseek-chat",
+            model = AppConfig.MODEL,
             systemPrompt = DEFAULT_SYSTEM_PROMPT,
-            maxTokens = 1_000,
+            maxTokens = 500,
             temperature = 0.3,
         ),
         historyRepository = JsonSessionHistoryRepository(
@@ -58,6 +61,7 @@ fun main() = runBlocking {
         ),
         contextBuilder = FullHistoryContextBuilder(),
         llmGateway = llmGateway,
+        tokenEstimator = ApproximateTokenEstimator(),
     )
 
     try {
