@@ -73,8 +73,11 @@ class AgentCli(
                 println("Примерная оценка токенов:")
                 println("- Текущий запрос: ${stats.currentRequestTokens}")
                 println("- Сохранённая история: ${stats.storedHistoryTokens}")
-                println("- Контекст, отправленный модели: ${stats.contextTokens}")
+                println("- Контекст без сжатия: ${stats.fullContextTokens}")
+                println("- Контекст, отправленный модели: ${stats.actualContextTokens}")
+                println("- Экономия контекста: ${stats.savedContextTokens}")
                 println("- Сообщений в контексте: ${stats.contextMessageCount}")
+                println("- Сообщений покрыто summary: ${stats.summarizedMessageCount}")
             }
 
             reply.tokenUsage?.let { usage ->

@@ -1,11 +1,13 @@
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import config.AppConfig
-import data.llm.OpenRouterContextCompressionMode
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
+import data.memory.JsonSessionSummaryRepository
 import domain.agent.AgentService
-import domain.context.FullHistoryContextBuilder
+import domain.context.SummaryContextBuilder
+import domain.memory.HistoryCompressionManager
+import domain.memory.LlmHistorySummarizer
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.token.ApproximateTokenEstimator
@@ -44,24 +46,44 @@ fun main() = runBlocking {
     val llmGateway = RetrofitLlmGateway(
         api = api,
         apiKey = AppConfig.apiKey,
-        openRouterContextCompressionMode = OpenRouterContextCompressionMode.ENABLED,
+    )
+
+    val summaryRepository = JsonSessionSummaryRepository(
+        storageFile = Path.of("storage", "session-summary.json"),
+        json = json,
+    )
+
+    val agentConfig = AgentConfig(
+        model = AppConfig.MODEL,
+        systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        maxTokens = 1_000,
+        temperature = 0.3,
+    )
+
+    val historySummarizer = LlmHistorySummarizer(
+        llmGateway = llmGateway,
+        config = agentConfig,
+    )
+
+    val historyCompressionManager = HistoryCompressionManager(
+        summaryRepository = summaryRepository,
+        historySummarizer = historySummarizer,
+        recentMessagesCount = 10,
+        summarizeBatchSize = 10,
     )
 
     val agentService = AgentService(
         session = ChatSession(),
-        config = AgentConfig(
-            model = AppConfig.MODEL,
-            systemPrompt = DEFAULT_SYSTEM_PROMPT,
-            maxTokens = 500,
-            temperature = 0.3,
-        ),
+        config = agentConfig,
         historyRepository = JsonSessionHistoryRepository(
             storageFile = Path.of("storage", "session-history.json"),
             json = json,
         ),
-        contextBuilder = FullHistoryContextBuilder(),
+        contextBuilder = SummaryContextBuilder(),
         llmGateway = llmGateway,
         tokenEstimator = ApproximateTokenEstimator(),
+        summaryRepository = summaryRepository,
+        historyCompressionManager = historyCompressionManager,
     )
 
     try {

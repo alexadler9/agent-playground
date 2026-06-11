@@ -2,14 +2,14 @@ package config
 
 object AppConfig {
 
-    const val BASE_URL = "https://openrouter.ai/api/v1/"
+    const val BASE_URL = "https://api.deepseek.com/"
 
-    const val MODEL = "openai/gpt-oss-20b:free"
+    const val MODEL = "deepseek-chat"
 
     val apiKey: String
-        get() = System.getenv("OPENROUTER_API_KEY")
+        get() = System.getenv("DEEPSEEK_API_KEY")
             ?: error(
-                "OPENROUTER_API_KEY is not set. " +
+                "DEEPSEEK_API_KEY is not set. " +
                         "Please set it as an environment variable"
             )
 }
