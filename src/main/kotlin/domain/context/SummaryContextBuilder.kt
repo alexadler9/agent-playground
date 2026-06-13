@@ -3,6 +3,7 @@ package domain.context
 import domain.model.AgentConfig
 import domain.model.ChatMessage
 import domain.model.ChatRole
+import domain.model.FactMemory
 import domain.model.SummaryState
 
 class SummaryContextBuilder : ContextBuilder {
@@ -11,6 +12,7 @@ class SummaryContextBuilder : ContextBuilder {
         config: AgentConfig,
         history: List<ChatMessage>,
         summary: SummaryState,
+        facts: FactMemory,
     ): List<ChatMessage> {
         val systemMessage = ChatMessage(
             role = ChatRole.SYSTEM,

@@ -1,6 +1,9 @@
 package presentation.cli
 
 import domain.agent.AgentService
+import domain.context.ContextBuilderProvider
+import domain.context.ContextStrategyType
+import domain.memory.BranchManager
 import domain.model.ChatRole
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -10,6 +13,8 @@ import kotlinx.coroutines.launch
 
 class AgentCli(
     private val agentService: AgentService,
+    private val contextBuilderProvider: ContextBuilderProvider,
+    private val branchManager: BranchManager,
     private val consoleInput: ConsoleInput = ConsoleInput(),
     private val stressTextBuilder: ProjectFilesStressTextBuilder = ProjectFilesStressTextBuilder(),
 ) {
@@ -44,6 +49,14 @@ class AgentCli(
                     sendStressContext(input)
                 }
 
+                input.startsWith(STRATEGY_COMMAND) -> {
+                    handleStrategyCommand(input)
+                }
+
+                input.startsWith(BRANCH_COMMAND) -> {
+                    handleBranchCommand(input)
+                }
+
                 else -> {
                     sendMessage(input)
                 }
@@ -68,28 +81,38 @@ class AgentCli(
             println("Агент:")
             println(reply.message.content)
 
+            println()
+            println(
+                "State: strategy=${contextBuilderProvider.currentStrategy.toDisplayName()}, " +
+                        "branch=${branchManager.currentBranch.name}"
+            )
+
             reply.estimatedTokenStats?.let { stats ->
-                println()
-                println("Примерная оценка токенов:")
-                println("- Текущий запрос: ${stats.currentRequestTokens}")
-                println("- Сохранённая история: ${stats.storedHistoryTokens}")
-                println("- Контекст без сжатия: ${stats.fullContextTokens}")
-                println("- Контекст, отправленный модели: ${stats.actualContextTokens}")
-                println("- Экономия контекста: ${stats.savedContextTokens}")
-                println("- Сообщений в контексте: ${stats.contextMessageCount}")
-                println("- Сообщений покрыто summary: ${stats.summarizedMessageCount}")
+                val contextDeltaLabel = if (stats.savedContextTokens >= 0) {
+                    "saved"
+                } else {
+                    "overhead"
+                }
+
+                val contextDelta = kotlin.math.abs(stats.savedContextTokens)
+
+                println(
+                    "Context: ${stats.actualContextTokens} tokens, " +
+                            "$contextDeltaLabel: $contextDelta, " +
+                            "messages: ${stats.contextMessageCount}"
+                )
             }
 
             reply.tokenUsage?.let { usage ->
-                println()
-                println("Реальные токены по данным API:")
-                println("- Prompt tokens: ${usage.promptTokens ?: "неизвестно"}")
-                println("- Completion tokens: ${usage.completionTokens ?: "неизвестно"}")
-                println("- Total tokens: ${usage.totalTokens ?: "неизвестно"}")
+                println(
+                    "API: prompt=${usage.promptTokens ?: "?"}, " +
+                            "completion=${usage.completionTokens ?: "?"}, " +
+                            "total=${usage.totalTokens ?: "?"}"
+                )
             }
 
             reply.responseTimeMs?.let { responseTimeMs ->
-                println("Время ответа: $responseTimeMs ms")
+                println("Time: ${responseTimeMs}ms")
             }
         } catch (e: Exception) {
             thinkingJob?.cancel()
@@ -127,6 +150,8 @@ class AgentCli(
         println("$HISTORY_COMMAND — показать историю текущей сессии")
         println("$CLEAR_COMMAND   — очистить историю текущей сессии")
         println("$STRESS_CONTEXT_COMMAND [repeat] — отправить файлы проекта для stress-test контекста")
+        println("$STRATEGY_COMMAND [current|full|sliding|facts] — управление стратегией контекста")
+        println("$BRANCH_COMMAND [current|list|create <name>|switch <name>] — управление ветками")
         println("$EXIT_COMMAND    — выйти")
         println()
     }
@@ -146,6 +171,108 @@ class AgentCli(
         println("Payload chars: ${stressText.length}")
 
         sendMessage(stressText)
+    }
+
+    private fun handleStrategyCommand(input: String) {
+        val strategyName = input
+            .substringAfter(" ", missingDelimiterValue = "")
+            .trim()
+            .lowercase()
+
+        if (strategyName.isBlank() || strategyName == "current") {
+            println(
+                "Текущая стратегия контекста: " +
+                        contextBuilderProvider.currentStrategy.toDisplayName()
+            )
+            return
+        }
+
+        val strategy = when (strategyName) {
+            "full" -> ContextStrategyType.FULL_HISTORY
+            "sliding" -> ContextStrategyType.SLIDING_WINDOW
+            "facts" -> ContextStrategyType.STICKY_FACTS
+            else -> null
+        }
+
+        if (strategy == null) {
+            println("Неизвестная стратегия: $strategyName")
+            println("Доступные стратегии: full, sliding, facts")
+            return
+        }
+
+        contextBuilderProvider.switchStrategy(strategy)
+
+        println(
+            "Стратегия контекста переключена на: " +
+                    strategy.toDisplayName()
+        )
+    }
+
+    private fun handleBranchCommand(input: String) {
+        val parts = input
+            .split(" ")
+            .filter { part -> part.isNotBlank() }
+
+        val action = parts.getOrNull(1)?.lowercase()
+
+        when (action) {
+            null, "current" -> {
+                println("Текущая ветка: ${branchManager.currentBranch.name}")
+            }
+
+            "list" -> {
+                val branches = branchManager.listBranches()
+
+                println("Ветки:")
+                branches.forEach { branch ->
+                    val marker = if (branch.id == branchManager.currentBranch.id) {
+                        "*"
+                    } else {
+                        " "
+                    }
+
+                    println("$marker ${branch.name}")
+                }
+            }
+
+            "create" -> {
+                val branchName = parts.getOrNull(2)
+
+                if (branchName.isNullOrBlank()) {
+                    println("Укажите имя ветки: $BRANCH_COMMAND create <name>")
+                    return
+                }
+
+                try {
+                    val branch = branchManager.createBranch(branchName)
+                    println("Создана ветка: ${branch.name}")
+                    println("Она содержит checkpoint текущей истории.")
+                } catch (e: IllegalArgumentException) {
+                    println(e.message)
+                }
+            }
+
+            "switch" -> {
+                val branchName = parts.getOrNull(2)
+
+                if (branchName.isNullOrBlank()) {
+                    println("Укажите имя ветки: $BRANCH_COMMAND switch <name>")
+                    return
+                }
+
+                try {
+                    val branch = branchManager.switchBranch(branchName)
+                    println("Переключились на ветку: ${branch.name}")
+                } catch (e: IllegalArgumentException) {
+                    println(e.message)
+                }
+            }
+
+            else -> {
+                println("Неизвестная команда ветки: $action")
+                println("Доступно: current, list, create <name>, switch <name>")
+            }
+        }
     }
 
     private fun CoroutineScope.launchThinkingIndicator(): Job {
@@ -181,10 +308,20 @@ class AgentCli(
         }
     }
 
+    private fun ContextStrategyType.toDisplayName(): String {
+        return when (this) {
+            ContextStrategyType.FULL_HISTORY -> "Full History"
+            ContextStrategyType.SLIDING_WINDOW -> "Sliding Window"
+            ContextStrategyType.STICKY_FACTS -> "Sticky Facts"
+        }
+    }
+
     private companion object {
         const val HISTORY_COMMAND = "/history"
         const val CLEAR_COMMAND = "/clear"
         const val STRESS_CONTEXT_COMMAND = "/stress-context"
+        const val STRATEGY_COMMAND = "/strategy"
+        const val BRANCH_COMMAND = "/branch"
         const val EXIT_COMMAND = "/exit"
     }
 }

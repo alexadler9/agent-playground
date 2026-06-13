@@ -6,7 +6,9 @@ import domain.model.ChatRole
 import domain.model.FactMemory
 import domain.model.SummaryState
 
-class FullHistoryContextBuilder : ContextBuilder {
+class SlidingWindowContextBuilder(
+    private val recentMessagesCount: Int,
+) : ContextBuilder {
 
     override fun buildContext(
         config: AgentConfig,
@@ -19,6 +21,8 @@ class FullHistoryContextBuilder : ContextBuilder {
             content = config.systemPrompt,
         )
 
-        return listOf(systemMessage) + history
+        val recentMessages = history.takeLast(recentMessagesCount)
+
+        return listOf(systemMessage) + recentMessages
     }
 }

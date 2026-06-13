@@ -2,6 +2,9 @@ package domain.agent
 
 import domain.context.ContextBuilder
 import domain.llm.LlmGateway
+import domain.memory.BranchManager
+import domain.memory.FactMemoryRepository
+import domain.memory.FactMemoryUpdater
 import domain.memory.HistoryCompressionManager
 import domain.memory.SessionHistoryRepository
 import domain.memory.SessionSummaryRepository
@@ -11,6 +14,7 @@ import domain.model.ChatMessage
 import domain.model.ChatRole
 import domain.model.ChatSession
 import domain.model.EstimatedTokenStats
+import domain.model.FactMemory
 import domain.model.SummaryState
 import domain.token.TokenEstimator
 
@@ -23,6 +27,9 @@ class AgentService(
     private val llmGateway: LlmGateway,
     private val tokenEstimator: TokenEstimator? = null,
     private val historyCompressionManager: HistoryCompressionManager? = null,
+    private val factMemoryRepository: FactMemoryRepository? = null,
+    private val factMemoryUpdater: FactMemoryUpdater? = null,
+    private val branchManager: BranchManager? = null,
 ) {
 
     suspend fun sendMessage(text: String): AgentReply {
@@ -31,20 +38,21 @@ class AgentService(
             content = text,
         )
 
-        historyRepository.appendMessage(
-            session = session,
-            message = userMessage,
-        )
+        appendMessageToCurrentHistory(userMessage)
 
-        val history = historyRepository.getMessages(session)
+        val history = getCurrentHistory()
 
         val summary = summaryRepository?.getSummary(session)
             ?: SummaryState.Empty
+
+        val facts = factMemoryRepository?.getFacts(session)
+            ?: FactMemory.Empty
 
         val context = contextBuilder.buildContext(
             config = config,
             history = history,
             summary = summary,
+            facts = facts,
         )
 
         val estimatedTokenStats = tokenEstimator?.let { estimator ->
@@ -78,12 +86,11 @@ class AgentService(
             estimatedTokenStats = estimatedTokenStats,
         )
 
-        historyRepository.appendMessage(
-            session = session,
-            message = reply.message,
-        )
+        appendMessageToCurrentHistory(replyWithStats.message)
 
-        val updatedHistory = historyRepository.getMessages(session)
+        updateFactsIfNeeded(text)
+
+        val updatedHistory = getCurrentHistory()
 
         historyCompressionManager?.compressIfNeeded(
             session = session,
@@ -94,11 +101,54 @@ class AgentService(
     }
 
     suspend fun getHistory(): List<ChatMessage> {
-        return historyRepository.getMessages(session)
+        return getCurrentHistory()
     }
 
     suspend fun clearHistory() {
-        historyRepository.clear(session)
+        clearCurrentHistory()
         summaryRepository?.clear(session)
+        factMemoryRepository?.clear(session)
+    }
+
+    private suspend fun updateFactsIfNeeded(userMessage: String) {
+        val repository = factMemoryRepository ?: return
+        val updater = factMemoryUpdater ?: return
+
+        val currentFacts = repository.getFacts(session)
+
+        val updatedFacts = updater.updateFacts(
+            currentFacts = currentFacts,
+            userMessage = userMessage,
+        )
+
+        repository.saveFacts(
+            session = session,
+            facts = updatedFacts,
+        )
+    }
+
+    private suspend fun appendMessageToCurrentHistory(message: ChatMessage) {
+        if (branchManager != null) {
+            val updatedHistory = branchManager.getCurrentHistory() + message
+            branchManager.replaceCurrentHistory(updatedHistory)
+        } else {
+            historyRepository.appendMessage(
+                session = session,
+                message = message,
+            )
+        }
+    }
+
+    private suspend fun getCurrentHistory(): List<ChatMessage> {
+        return branchManager?.getCurrentHistory()
+            ?: historyRepository.getMessages(session)
+    }
+
+    private suspend fun clearCurrentHistory() {
+        if (branchManager != null) {
+            branchManager.clearCurrentBranch()
+        } else {
+            historyRepository.clear(session)
+        }
     }
 }

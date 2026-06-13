@@ -2,11 +2,12 @@ package domain.context
 
 import domain.model.AgentConfig
 import domain.model.ChatMessage
-import domain.model.ChatRole
 import domain.model.FactMemory
 import domain.model.SummaryState
 
-class FullHistoryContextBuilder : ContextBuilder {
+class SwitchableContextBuilder(
+    private val provider: ContextBuilderProvider,
+) : ContextBuilder {
 
     override fun buildContext(
         config: AgentConfig,
@@ -14,11 +15,11 @@ class FullHistoryContextBuilder : ContextBuilder {
         summary: SummaryState,
         facts: FactMemory,
     ): List<ChatMessage> {
-        val systemMessage = ChatMessage(
-            role = ChatRole.SYSTEM,
-            content = config.systemPrompt,
+        return provider.getCurrentBuilder().buildContext(
+            config = config,
+            history = history,
+            summary = summary,
+            facts = facts,
         )
-
-        return listOf(systemMessage) + history
     }
 }

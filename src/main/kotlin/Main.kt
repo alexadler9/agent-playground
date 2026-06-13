@@ -2,11 +2,20 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
+import data.memory.JsonFactMemoryRepository
 import data.memory.JsonSessionHistoryRepository
 import data.memory.JsonSessionSummaryRepository
 import domain.agent.AgentService
+import domain.context.ContextBuilderProvider
+import domain.context.ContextStrategyType
+import domain.context.FullHistoryContextBuilder
+import domain.context.SlidingWindowContextBuilder
+import domain.context.StickyFactsContextBuilder
 import domain.context.SummaryContextBuilder
+import domain.context.SwitchableContextBuilder
+import domain.memory.BranchManager
 import domain.memory.HistoryCompressionManager
+import domain.memory.LlmFactMemoryUpdater
 import domain.memory.LlmHistorySummarizer
 import domain.model.AgentConfig
 import domain.model.ChatSession
@@ -60,6 +69,12 @@ fun main() = runBlocking {
         temperature = 0.3,
     )
 
+    val factMemoryUpdater = LlmFactMemoryUpdater(
+        llmGateway = llmGateway,
+        config = agentConfig,
+        json = json,
+    )
+
     val historySummarizer = LlmHistorySummarizer(
         llmGateway = llmGateway,
         config = agentConfig,
@@ -72,6 +87,24 @@ fun main() = runBlocking {
         summarizeBatchSize = 10,
     )
 
+    val factMemoryRepository = JsonFactMemoryRepository(
+        storageFile = Path.of("storage", "facts.json"),
+        json = json,
+    )
+
+    val contextBuilderProvider = ContextBuilderProvider(
+        initialStrategy = ContextStrategyType.SLIDING_WINDOW,
+        fullHistoryContextBuilder = FullHistoryContextBuilder(),
+        slidingWindowContextBuilder = SlidingWindowContextBuilder(
+            recentMessagesCount = 10,
+        ),
+        stickyFactsContextBuilder = StickyFactsContextBuilder(
+            recentMessagesCount = 10,
+        ),
+    )
+
+    val branchManager = BranchManager()
+
     val agentService = AgentService(
         session = ChatSession(),
         config = agentConfig,
@@ -79,16 +112,23 @@ fun main() = runBlocking {
             storageFile = Path.of("storage", "session-history.json"),
             json = json,
         ),
-        contextBuilder = SummaryContextBuilder(),
+        contextBuilder = SwitchableContextBuilder(
+            provider = contextBuilderProvider,
+        ),
         llmGateway = llmGateway,
         tokenEstimator = ApproximateTokenEstimator(),
         summaryRepository = summaryRepository,
-        historyCompressionManager = historyCompressionManager,
+//        historyCompressionManager = historyCompressionManager,
+        factMemoryRepository = factMemoryRepository,
+        factMemoryUpdater = factMemoryUpdater,
+        branchManager = branchManager,
     )
 
     try {
         AgentCli(
             agentService = agentService,
+            contextBuilderProvider = contextBuilderProvider,
+            branchManager = branchManager,
         ).start()
     } finally {
         okHttpClient.dispatcher.executorService.shutdown()
