@@ -1,4 +1,4 @@
-package domain.agent
+package domain.contextagent
 
 import domain.context.ContextBuilder
 import domain.llm.LlmGateway
@@ -18,7 +18,7 @@ import domain.model.FactMemory
 import domain.model.SummaryState
 import domain.token.TokenEstimator
 
-class AgentService(
+class ContextAgentService(
     private val session: ChatSession,
     private val config: AgentConfig,
     private val historyRepository: SessionHistoryRepository,

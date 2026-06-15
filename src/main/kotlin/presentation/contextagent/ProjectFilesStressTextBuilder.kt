@@ -1,4 +1,4 @@
-package presentation.cli
+package presentation.contextagent
 
 import java.nio.file.Files
 import java.nio.file.Path

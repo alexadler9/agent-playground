@@ -1,4 +1,4 @@
-package presentation.cli
+package presentation
 
 import java.io.BufferedReader
 import java.io.InputStreamReader

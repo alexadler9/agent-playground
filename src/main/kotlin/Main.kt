@@ -5,13 +5,12 @@ import data.llm.api.ChatCompletionApi
 import data.memory.JsonFactMemoryRepository
 import data.memory.JsonSessionHistoryRepository
 import data.memory.JsonSessionSummaryRepository
-import domain.agent.AgentService
+import domain.contextagent.ContextAgentService
 import domain.context.ContextBuilderProvider
 import domain.context.ContextStrategyType
 import domain.context.FullHistoryContextBuilder
 import domain.context.SlidingWindowContextBuilder
 import domain.context.StickyFactsContextBuilder
-import domain.context.SummaryContextBuilder
 import domain.context.SwitchableContextBuilder
 import domain.memory.BranchManager
 import domain.memory.HistoryCompressionManager
@@ -24,7 +23,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import presentation.cli.AgentCli
+import presentation.contextagent.ContextAgentCli
 import retrofit2.Retrofit
 import java.nio.file.Path
 import java.time.Duration
@@ -105,7 +104,7 @@ fun main() = runBlocking {
 
     val branchManager = BranchManager()
 
-    val agentService = AgentService(
+    val agentService = ContextAgentService(
         session = ChatSession(),
         config = agentConfig,
         historyRepository = JsonSessionHistoryRepository(
@@ -125,7 +124,7 @@ fun main() = runBlocking {
     )
 
     try {
-        AgentCli(
+        ContextAgentCli(
             agentService = agentService,
             contextBuilderProvider = contextBuilderProvider,
             branchManager = branchManager,

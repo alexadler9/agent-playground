@@ -1,6 +1,6 @@
-package presentation.cli
+package presentation.contextagent
 
-import domain.agent.AgentService
+import domain.contextagent.ContextAgentService
 import domain.context.ContextBuilderProvider
 import domain.context.ContextStrategyType
 import domain.memory.BranchManager
@@ -10,9 +10,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import presentation.ConsoleInput
 
-class AgentCli(
-    private val agentService: AgentService,
+class ContextAgentCli(
+    private val agentService: ContextAgentService,
     private val contextBuilderProvider: ContextBuilderProvider,
     private val branchManager: BranchManager,
     private val consoleInput: ConsoleInput = ConsoleInput(),
