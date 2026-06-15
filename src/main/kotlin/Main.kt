@@ -2,28 +2,19 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
-import data.memory.JsonFactMemoryRepository
 import data.memory.JsonSessionHistoryRepository
-import data.memory.JsonSessionSummaryRepository
-import domain.contextagent.ContextAgentService
-import domain.context.ContextBuilderProvider
-import domain.context.ContextStrategyType
-import domain.context.FullHistoryContextBuilder
-import domain.context.SlidingWindowContextBuilder
-import domain.context.StickyFactsContextBuilder
-import domain.context.SwitchableContextBuilder
-import domain.memory.BranchManager
-import domain.memory.HistoryCompressionManager
-import domain.memory.LlmFactMemoryUpdater
-import domain.memory.LlmHistorySummarizer
+import data.statefulagent.memory.JsonTaskContextRepository
+import data.statefulagent.memory.MarkdownLongTermMemoryRepository
 import domain.model.AgentConfig
 import domain.model.ChatSession
-import domain.token.ApproximateTokenEstimator
+import domain.statefulagent.MemoryLayerAgentService
+import domain.statefulagent.MemoryLayerPromptBuilder
+import domain.statefulagent.memory.LlmTaskContextUpdater
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import presentation.contextagent.ContextAgentCli
+import presentation.statefulagent.StatefulAgentCli
 import retrofit2.Retrofit
 import java.nio.file.Path
 import java.time.Duration
@@ -56,87 +47,55 @@ fun main() = runBlocking {
         apiKey = AppConfig.apiKey,
     )
 
-    val summaryRepository = JsonSessionSummaryRepository(
-        storageFile = Path.of("storage", "session-summary.json"),
+    val taskContextRepository = JsonTaskContextRepository(
+        storageFile = Path.of("storage", "stateful-agent", "task-context.json"),
         json = json,
     )
 
-    val agentConfig = AgentConfig(
-        model = AppConfig.MODEL,
-        systemPrompt = DEFAULT_SYSTEM_PROMPT,
-        maxTokens = 1_000,
-        temperature = 0.3,
+    val longTermMemoryRepository = MarkdownLongTermMemoryRepository(
+        memoryDirectory = Path.of("storage", "stateful-agent", "long-term-memory"),
     )
 
-    val factMemoryUpdater = LlmFactMemoryUpdater(
+    val taskContextUpdater = LlmTaskContextUpdater(
         llmGateway = llmGateway,
-        config = agentConfig,
+        config = AgentConfig(
+            model = AppConfig.MODEL,
+            systemPrompt = "Ты извлекаешь рабочую память текущей задачи",
+            maxTokens = 1000,
+            temperature = 0.0,
+        ),
         json = json,
     )
 
-    val historySummarizer = LlmHistorySummarizer(
+    val agentService = MemoryLayerAgentService(
+        session = ChatSession(id = "stateful-agent-session"),
+        config = AgentConfig(
+            model = AppConfig.MODEL,
+            systemPrompt = """
+            Ты полезный ассистент.
+            Отвечай на русском языке.
+            Учитывай явные слои памяти: краткосрочную, рабочую и долговременную.
+        """.trimIndent(),
+            maxTokens = 1_000,
+            temperature = 0.3,
+        ),
         llmGateway = llmGateway,
-        config = agentConfig,
-    )
-
-    val historyCompressionManager = HistoryCompressionManager(
-        summaryRepository = summaryRepository,
-        historySummarizer = historySummarizer,
-        recentMessagesCount = 10,
-        summarizeBatchSize = 10,
-    )
-
-    val factMemoryRepository = JsonFactMemoryRepository(
-        storageFile = Path.of("storage", "facts.json"),
-        json = json,
-    )
-
-    val contextBuilderProvider = ContextBuilderProvider(
-        initialStrategy = ContextStrategyType.SLIDING_WINDOW,
-        fullHistoryContextBuilder = FullHistoryContextBuilder(),
-        slidingWindowContextBuilder = SlidingWindowContextBuilder(
-            recentMessagesCount = 10,
-        ),
-        stickyFactsContextBuilder = StickyFactsContextBuilder(
-            recentMessagesCount = 10,
-        ),
-    )
-
-    val branchManager = BranchManager()
-
-    val agentService = ContextAgentService(
-        session = ChatSession(),
-        config = agentConfig,
-        historyRepository = JsonSessionHistoryRepository(
+        sessionHistoryRepository = JsonSessionHistoryRepository(
             storageFile = Path.of("storage", "session-history.json"),
             json = json,
         ),
-        contextBuilder = SwitchableContextBuilder(
-            provider = contextBuilderProvider,
-        ),
-        llmGateway = llmGateway,
-        tokenEstimator = ApproximateTokenEstimator(),
-        summaryRepository = summaryRepository,
-//        historyCompressionManager = historyCompressionManager,
-        factMemoryRepository = factMemoryRepository,
-        factMemoryUpdater = factMemoryUpdater,
-        branchManager = branchManager,
+        taskContextRepository = taskContextRepository,
+        longTermMemoryRepository = longTermMemoryRepository,
+        taskContextUpdater = taskContextUpdater,
+        promptBuilder = MemoryLayerPromptBuilder(),
     )
 
     try {
-        ContextAgentCli(
+        StatefulAgentCli(
             agentService = agentService,
-            contextBuilderProvider = contextBuilderProvider,
-            branchManager = branchManager,
         ).start()
     } finally {
         okHttpClient.dispatcher.executorService.shutdown()
         okHttpClient.connectionPool.evictAll()
     }
 }
-
-private const val DEFAULT_SYSTEM_PROMPT =
-    "Ты полезный AI-агент. Отвечай на русском языке. " +
-            "Учитывай историю текущей сессии. " +
-            "Если пользователь спрашивает о данных, которые были в текущем диалоге, используй историю сообщений. " +
-            "Если история была очищена или нужной информации нет в контексте, честно скажи, что не видишь этих данных"

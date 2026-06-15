@@ -10,7 +10,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import presentation.ConsoleInput
+import presentation.common.ConsoleInput
+import presentation.common.clearThinkingLine
+import presentation.common.launchThinkingIndicator
 
 class ContextAgentCli(
     private val agentService: ContextAgentService,
@@ -274,31 +276,6 @@ class ContextAgentCli(
                 println("Доступно: current, list, create <name>, switch <name>")
             }
         }
-    }
-
-    private fun CoroutineScope.launchThinkingIndicator(): Job {
-        return launch {
-            var dotCount = 1
-
-            while (true) {
-                val dots = ".".repeat(dotCount)
-                print("\rАгент думает$dots   ")
-                System.out.flush()
-
-                dotCount = if (dotCount == 3) {
-                    1
-                } else {
-                    dotCount + 1
-                }
-
-                delay(400)
-            }
-        }
-    }
-
-    private fun clearThinkingLine() {
-        print("\r${" ".repeat(40)}\r")
-        System.out.flush()
     }
 
     private fun ChatRole.toDisplayName(): String {
