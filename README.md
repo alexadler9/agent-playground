@@ -1,18 +1,126 @@
 # Agent Playground
 
-Kotlin/JVM CLI application with a simple AI agent that persists session history, tracks token usage, and supports multiple context management strategies
+Kotlin/JVM CLI playground for experimenting with AI agent architecture
 
-The agent stores user and assistant messages locally, restores them after app restart, and builds LLM context using the selected strategy
+The project started as a context-management playground and now includes a stateful agent with explicit memory layers
 
-## Commands
+## Modes
+
+The project contains two experimental agent modes
+
+### Context Agent
+
+The context agent is used to experiment with different ways of building LLM context
+
+Supported context strategies
+
+* **Full History** — sends the full conversation history
+* **Sliding Window** — sends only the last N messages
+* **Sticky Facts** — sends extracted key facts plus recent messages
+* **Branching** — allows independent conversation branches from a checkpoint
+
+This mode was used to compare context size, information loss, token usage and branch isolation
+
+### Stateful Agent
+
+The stateful agent uses an explicit memory model with three separated memory layers:
+
+* **Short-term memory** — current dialogue history
+* **Working memory** — structured context of the current task
+* **Long-term memory** — stable profile, decisions and reusable knowledge
+
+The goal is to make it explicit what information is stored where and how it affects the assistant response
+
+## Memory layers
+
+### Short-term memory
+
+Short-term memory stores the current dialogue as user and assistant messages
+
+It answers the question:
 
 ```text
-/history — show current session history
-/clear — clear current branch, facts and summary
-/strategy [current|full|sliding|facts] — switch context strategy
+What happened in the current conversation?
+```
+
+Storage:
+
+```text
+storage/session-history.json
+```
+
+### Working memory
+
+Working memory stores structured information about the current task
+
+It may include:
+
+* task name
+* goal
+* current step
+* completed items
+* pending items
+* task decisions
+* task constraints
+
+It answers the question:
+
+```text
+What task are we working on and what is its current state?
+```
+
+Storage:
+
+```text
+storage/stateful-agent/task-context.json
+```
+
+Working memory is updated separately from chat history through a `TaskContextUpdater`
+
+### Long-term memory
+
+Long-term memory stores stable information that should survive between tasks and sessions
+
+It includes:
+
+* user profile
+* stable project decisions
+* reusable knowledge
+
+It answers the question:
+
+```text
+What should the assistant remember beyond the current task?
+```
+
+Storage:
+
+```text
+storage/stateful-agent/long-term-memory/profile.md
+storage/stateful-agent/long-term-memory/decisions.md
+storage/stateful-agent/long-term-memory/knowledge.md
+```
+
+Long-term memory is edited manually through Markdown files
+
+## Stateful Agent commands
+
+```text
+/memory [all|short|work|long] — show memory layers
+/clear-short                  — clear short-term memory
+/clear-work                   — clear working memory
+/exit                         — exit the app
+```
+
+## Context Agent commands
+
+```text
+/history                                      — show current session history
+/clear                                        — clear current branch, facts and summary
+/strategy [current|full|sliding|facts]         — switch context strategy
 /branch [current|list|create <name>|switch <name>] — manage conversation branches
-/stress-context [repeat] — send project files as a large context payload
-/exit — exit the app
+/stress-context [repeat]                      — send project files as a large context payload
+/exit                                         — exit the app
 ```
 
 ## Environment variables
@@ -31,82 +139,40 @@ Restart the terminal or IDE after setting the variable
 .\gradlew.bat run
 ```
 
-or:
-
-```bash
-./gradlew run
-```
-
-## Current limitations
-
-* History and summary are stored in local JSON files
-* Only one persisted session is supported for now
-* Long-term structured memory is not implemented yet
-* CLI is the only presentation layer for now
-* Summary quality depends on the LLM response
-* The current compression strategy is simple batch-based summarization
-
 ## Persistent storage
 
-Session history is saved to:
+Runtime files are stored in the `storage/` directory
+
+The `storage/` directory is ignored by Git because it contains local runtime data
+
+Current storage files include:
 
 ```text
 storage/session-history.json
-```
-
-Compressed summary is saved to:
-
-```text
 storage/session-summary.json
-```
-
-Sticky facts are saved to:
-
-```text
 storage/facts.json
+storage/stateful-agent/task-context.json
+storage/stateful-agent/long-term-memory/profile.md
+storage/stateful-agent/long-term-memory/decisions.md
+storage/stateful-agent/long-term-memory/knowledge.md
 ```
 
-The storage/ directory is ignored by Git because it contains local runtime data
+## Token statistics
 
-## Context strategies
-### Full History
-
-Sends the full conversation history to the model
-
-Useful as a baseline for comparison, but expensive for long conversations
-
-### Sliding Window
-
-Sends only the last N messages
-
-This keeps context small, but older important details may disappear from the model context
-
-### Sticky Facts
-
-Stores stable facts separately as key-value memory and sends:
-
-system prompt
-+ facts
-+ last N messages
-
-This helps preserve important details even when old messages fall out of the recent window
-
-### Branching
-
-Allows creating independent conversation branches from a checkpoint
-
-Each branch can continue with its own history, so different solution paths do not mix
-
-## Token statistics and context stress-test
-
-After each model response, the CLI prints compact state and token statistics:
+After model responses, the CLI may print compact token statistics:
 
 ```text
-State: strategy=Sticky Facts, branch=main
-Context: 1200 tokens, saved: 800, contextMessages=12, historyMessages=28
 API: prompt=1300, completion=200, total=1500
 ```
 
-Token estimates are approximate. Exact prompt/completion/total usage is taken from the API response
+Some modes also print estimated context statistics. Token estimates are approximate; exact prompt, completion and total usage are taken from the API response
 
-The /stress-context [repeat] command sends project files as a large payload. It is used to observe how prompt tokens grow and what happens when the model context window is exceeded
+## Current limitations
+
+* CLI is the only presentation layer
+* Runtime storage is local and file-based
+* Only one main persisted session is supported
+* Branches are stored in memory only
+* Working memory extraction depends on the LLM response
+* Long-term memory is edited manually through Markdown files
+* Context compression and sticky facts are experimental strategies from the context-management mode
