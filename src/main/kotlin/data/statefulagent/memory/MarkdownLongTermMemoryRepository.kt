@@ -1,6 +1,7 @@
 package data.statefulagent.memory
 
 import domain.statefulagent.memory.LongTermMemoryRepository
+import domain.statefulagent.memory.UserProfileRepository
 import domain.statefulagent.model.LongTermMemory
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
@@ -10,13 +11,14 @@ import kotlin.io.path.writeText
 
 class MarkdownLongTermMemoryRepository(
     private val memoryDirectory: Path,
+    private val userProfileRepository: UserProfileRepository,
 ) : LongTermMemoryRepository {
 
     override suspend fun getLongTermMemory(): LongTermMemory {
         ensureFilesExist()
 
         return LongTermMemory(
-            profile = profileFile.readText(),
+            profile = userProfileRepository.getActiveProfileContent(),
             decisions = decisionsFile.readText(),
             knowledge = knowledgeFile.readText(),
         )
@@ -25,16 +27,6 @@ class MarkdownLongTermMemoryRepository(
     private fun ensureFilesExist() {
         if (!memoryDirectory.exists()) {
             memoryDirectory.createDirectories()
-        }
-
-        if (!profileFile.exists()) {
-            profileFile.writeText(
-                """
-            # Профиль пользователя
-            
-            Здесь хранятся устойчивые сведения о пользователе, его предпочтениях, стиле общения и долгосрочных настройках.
-            """.trimIndent()
-            )
         }
 
         if (!decisionsFile.exists()) {
@@ -57,9 +49,6 @@ class MarkdownLongTermMemoryRepository(
             )
         }
     }
-
-    private val profileFile: Path
-        get() = memoryDirectory.resolve("profile.md")
 
     private val decisionsFile: Path
         get() = memoryDirectory.resolve("decisions.md")

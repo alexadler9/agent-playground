@@ -3,6 +3,7 @@ package presentation.statefulagent
 import domain.model.ChatMessage
 import domain.model.ChatRole
 import domain.statefulagent.MemoryLayerAgentService
+import domain.statefulagent.memory.UserProfileRepository
 import domain.statefulagent.model.AssistantMemory
 import domain.statefulagent.model.LongTermMemory
 import domain.statefulagent.model.TaskContext
@@ -13,6 +14,7 @@ import presentation.common.launchThinkingIndicator
 
 class StatefulAgentCli(
     private val agentService: MemoryLayerAgentService,
+    private val userProfileRepository: UserProfileRepository,
     private val consoleInput: ConsoleInput = ConsoleInput(),
 ) {
 
@@ -34,6 +36,10 @@ class StatefulAgentCli(
 
                 input.startsWith(MEMORY_COMMAND) -> {
                     handleMemoryCommand(input)
+                }
+
+                input.startsWith(PROFILE_COMMAND) -> {
+                    handleProfileCommand(input)
                 }
 
                 input == CLEAR_SHORT_COMMAND -> {
@@ -97,6 +103,69 @@ class StatefulAgentCli(
             else -> {
                 println("Неизвестный слой памяти: $argument")
                 println("Доступно: /memory, /memory short, /memory work, /memory long")
+            }
+        }
+
+        println()
+    }
+
+    private suspend fun handleProfileCommand(input: String) {
+        val parts = input
+            .split(" ")
+            .filter { part -> part.isNotBlank() }
+
+        val action = parts.getOrNull(1)?.lowercase() ?: "current"
+
+        when (action) {
+            "current" -> {
+                val activeProfile = userProfileRepository.getActiveProfileName()
+                println("Активный профиль: $activeProfile")
+            }
+
+            "list" -> {
+                val activeProfile = userProfileRepository.getActiveProfileName()
+                val profiles = userProfileRepository.listProfiles()
+
+                println("Доступные профили:")
+
+                if (profiles.isEmpty()) {
+                    println("- профилей нет")
+                } else {
+                    profiles.forEach { profile ->
+                        val marker = if (profile == activeProfile) "*" else " "
+                        println("$marker $profile")
+                    }
+                }
+            }
+
+            "show" -> {
+                val activeProfile = userProfileRepository.getActiveProfileName()
+                val content = userProfileRepository.getActiveProfileContent()
+
+                println("Активный профиль: $activeProfile")
+                println()
+                println(content)
+            }
+
+            "switch" -> {
+                val profileName = parts.getOrNull(2)
+
+                if (profileName.isNullOrBlank()) {
+                    println("Укажите имя профиля: $PROFILE_COMMAND switch <name>")
+                    return
+                }
+
+                try {
+                    userProfileRepository.switchProfile(profileName)
+                    println("Активный профиль переключён на: $profileName")
+                } catch (e: IllegalArgumentException) {
+                    println(e.message)
+                }
+            }
+
+            else -> {
+                println("Неизвестная команда профиля: $action")
+                println("Доступно: current, list, show, switch <name>")
             }
         }
 
@@ -196,6 +265,7 @@ class StatefulAgentCli(
         println("Stateful Agent")
         println("Команды:")
         println("$MEMORY_COMMAND [all|short|work|long] — показать слои памяти")
+        println("$PROFILE_COMMAND [current|list|show|switch <name>] — управление профилями")
         println("$CLEAR_SHORT_COMMAND — очистить краткосрочную память")
         println("$CLEAR_WORK_COMMAND — очистить рабочую память")
         println("$EXIT_COMMAND — выйти")
@@ -205,6 +275,7 @@ class StatefulAgentCli(
     private companion object {
         const val USER_INPUT_PREFIX = "Вы: "
         const val MEMORY_COMMAND = "/memory"
+        const val PROFILE_COMMAND = "/profile"
         const val CLEAR_SHORT_COMMAND = "/clear-short"
         const val CLEAR_WORK_COMMAND = "/clear-work"
         const val EXIT_COMMAND = "/exit"

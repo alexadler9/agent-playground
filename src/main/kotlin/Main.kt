@@ -5,6 +5,7 @@ import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.JsonTaskContextRepository
 import data.statefulagent.memory.MarkdownLongTermMemoryRepository
+import data.statefulagent.memory.MarkdownUserProfileRepository
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.statefulagent.MemoryLayerAgentService
@@ -47,13 +48,24 @@ fun main() = runBlocking {
         apiKey = AppConfig.apiKey,
     )
 
+    val storageRoot = Path.of(
+        "storage",
+        "stateful-agent",
+    )
+
     val taskContextRepository = JsonTaskContextRepository(
-        storageFile = Path.of("storage", "stateful-agent", "task-context.json"),
+        storageFile = storageRoot.resolve("task-context.json"),
         json = json,
     )
 
+    val userProfileRepository = MarkdownUserProfileRepository(
+        profilesDirectory = storageRoot.resolve("profiles"),
+        activeProfileFile = storageRoot.resolve("active-profile.txt"),
+    )
+
     val longTermMemoryRepository = MarkdownLongTermMemoryRepository(
-        memoryDirectory = Path.of("storage", "stateful-agent", "long-term-memory"),
+        memoryDirectory = storageRoot.resolve("long-term-memory"),
+        userProfileRepository = userProfileRepository,
     )
 
     val taskContextUpdater = LlmTaskContextUpdater(
@@ -93,6 +105,7 @@ fun main() = runBlocking {
     try {
         StatefulAgentCli(
             agentService = agentService,
+            userProfileRepository = userProfileRepository,
         ).start()
     } finally {
         okHttpClient.dispatcher.executorService.shutdown()
