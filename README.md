@@ -2,7 +2,7 @@
 
 Kotlin/JVM CLI playground for experimenting with AI agent architecture
 
-The project started as a context-management playground and now includes a stateful agent with explicit memory layers
+The project started as a context-management playground and now includes a stateful agent with explicit memory layers and markdown-based personalization
 
 ## Modes
 
@@ -30,6 +30,31 @@ The stateful agent uses an explicit memory model with three separated memory lay
 * **Long-term memory** — stable profile, decisions and reusable knowledge
 
 The goal is to make it explicit what information is stored where and how it affects the assistant response
+
+## Personalization
+
+Personalization is implemented through markdown-based user profiles
+
+Profiles are stored as free-form .md files. The user can create, edit and switch profiles without changing Kotlin code
+
+Example profiles:
+
+```text
+storage/stateful-agent/profiles/default.md
+storage/stateful-agent/profiles/android-dev.md
+storage/stateful-agent/profiles/beginner.md
+storage/stateful-agent/profiles/product-manager.md
+```
+
+The active profile is stored in:
+
+```text
+storage/stateful-agent/active-profile.txt
+```
+
+The active profile is loaded on every request and added to the long-term memory block
+
+This allows the same user request to produce different answers depending on the selected profile
 
 ## Memory layers
 
@@ -96,7 +121,8 @@ What should the assistant remember beyond the current task?
 Storage:
 
 ```text
-storage/stateful-agent/long-term-memory/profile.md
+storage/stateful-agent/profiles/
+storage/stateful-agent/active-profile.txt
 storage/stateful-agent/long-term-memory/decisions.md
 storage/stateful-agent/long-term-memory/knowledge.md
 ```
@@ -106,10 +132,11 @@ Long-term memory is edited manually through Markdown files
 ## Stateful Agent commands
 
 ```text
-/memory [all|short|work|long] — show memory layers
-/clear-short                  — clear short-term memory
-/clear-work                   — clear working memory
-/exit                         — exit the app
+/memory [all|short|work|long]              — show memory layers
+/profile [current|list|show|switch <name>] — manage user profiles
+/clear-short                               — clear short-term memory
+/clear-work                                — clear working memory
+/exit                                      — exit the app
 ```
 
 ## Context Agent commands
@@ -152,7 +179,8 @@ storage/session-history.json
 storage/session-summary.json
 storage/facts.json
 storage/stateful-agent/task-context.json
-storage/stateful-agent/long-term-memory/profile.md
+storage/stateful-agent/active-profile.txt
+storage/stateful-agent/profiles/default.md
 storage/stateful-agent/long-term-memory/decisions.md
 storage/stateful-agent/long-term-memory/knowledge.md
 ```
@@ -175,4 +203,5 @@ Some modes also print estimated context statistics. Token estimates are approxim
 * Branches are stored in memory only
 * Working memory extraction depends on the LLM response
 * Long-term memory is edited manually through Markdown files
+* User profiles are file-based and switched through active-profile.txt
 * Context compression and sticky facts are experimental strategies from the context-management mode
