@@ -2,7 +2,7 @@
 
 Kotlin/JVM CLI playground for experimenting with AI agent architecture
 
-The project started as a context-management playground and now includes a stateful agent with explicit memory layers and markdown-based personalization
+The project started as a context-management playground and now includes a stateful agent with explicit memory layers, markdown-based personalization, task state management and stage-based orchestration
 
 ## Modes
 
@@ -30,6 +30,61 @@ The stateful agent uses an explicit memory model with three separated memory lay
 * **Long-term memory** — stable profile, decisions and reusable knowledge
 
 The goal is to make it explicit what information is stored where and how it affects the assistant response
+
+The stateful agent also includes a task state machine and stage-based orchestration. A task is represented through:
+
+* current stage
+* current step
+* expected next action
+
+Supported task stages:
+
+* PLANNING
+* EXECUTION
+* VALIDATION
+* DONE
+
+The orchestration flow is controlled by Kotlin code. The LLM may suggest the next stage, but transitions are validated by the application
+
+Typical flow:
+
+```text
+PLANNING -> EXECUTION -> VALIDATION -> DONE
+```
+
+Validation may return the task back to execution if the result is incomplete or does not satisfy the plan:
+
+```text
+VALIDATION -> EXECUTION -> VALIDATION
+```
+
+## Stage agents
+
+Each task stage is handled by a separate stage agent with its own system prompt:
+
+* PlanningStageAgent — creates a plan or asks for missing information
+* ExecutionStageAgent — performs the approved plan
+* ValidationStageAgent — checks the execution result against the task, plan and constraints
+
+The orchestrator selects the correct stage agent based on the persisted task state
+
+## Task artifacts
+
+Stage results are stored as task artifacts
+
+Artifacts are separated from task state. The task state only describes where the task currently is, while artifacts store the latest meaningful result of each stage
+
+Example artifacts:
+
+* planning artifact — approved or pending plan
+* execution artifact — produced solution or implementation
+* validation artifact — validation result
+
+Storage:
+
+```text
+storage/stateful-agent/task-artifacts.json
+```
 
 ## Personalization
 
@@ -134,9 +189,8 @@ Long-term memory is edited manually through Markdown files
 ```text
 /memory [all|short|work|long]              — show memory layers
 /profile [current|list|show|switch <name>] — manage user profiles
-/clear-short                               — clear short-term memory
-/clear-work                                — clear working memory
-/exit                                      — exit the app
+/clear [short|work|task|all]               — clear memory and task state
+/exit — exit the app
 ```
 
 ## Context Agent commands
@@ -179,6 +233,8 @@ storage/session-history.json
 storage/session-summary.json
 storage/facts.json
 storage/stateful-agent/task-context.json
+storage/stateful-agent/task-state.json
+storage/stateful-agent/task-artifacts.json
 storage/stateful-agent/active-profile.txt
 storage/stateful-agent/profiles/default.md
 storage/stateful-agent/long-term-memory/decisions.md
@@ -205,3 +261,5 @@ Some modes also print estimated context statistics. Token estimates are approxim
 * Long-term memory is edited manually through Markdown files
 * User profiles are file-based and switched through active-profile.txt
 * Context compression and sticky facts are experimental strategies from the context-management mode
+* Task orchestration is stage-based, but still depends on LLM output quality inside each stage
+* Task artifacts currently store the latest artifact per stage, not a full versioned event log
