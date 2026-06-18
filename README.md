@@ -58,6 +58,35 @@ Validation may return the task back to execution if the result is incomplete or 
 VALIDATION -> EXECUTION -> VALIDATION
 ```
 
+## Project invariants
+
+Stateful Agent supports project invariants: stable constraints that are stored separately from the dialogue and must be considered by the agent when planning or proposing solutions
+
+Invariants are used for things like:
+
+* selected architecture;
+* accepted technical decisions;
+* stack constraints;
+* project-level rules.
+
+The agent receives invariants as a separate context block and must not suggest solutions that violate them. If the user asks for a conflicting solution, the agent should explain the conflict and suggest an allowed alternative
+
+Invariants are stored outside the dialogue history:
+
+```text
+storage/stateful-agent/invariants.md
+```
+
+Example:
+
+```text
+User: Implement the mapper in Java.
+
+Agent: Java conflicts with the project invariants because new components should be implemented in Kotlin. I can implement the mapper in Kotlin instead.
+```
+
+This means a conflicting user request should not become an active task constraint such as “use Java”. The agent should keep the project invariant as the higher-priority rule and continue with a valid alternative if the user agrees
+
 ## Stage agents
 
 Each task stage is handled by a separate stage agent with its own system prompt:
@@ -232,6 +261,7 @@ Current storage files include:
 storage/session-history.json
 storage/session-summary.json
 storage/facts.json
+storage/stateful-agent/invariants.md
 storage/stateful-agent/task-context.json
 storage/stateful-agent/task-state.json
 storage/stateful-agent/task-artifacts.json
