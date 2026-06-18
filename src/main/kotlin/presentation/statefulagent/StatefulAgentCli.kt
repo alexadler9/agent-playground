@@ -1,19 +1,16 @@
 package presentation.statefulagent
 
-import domain.model.ChatMessage
-import domain.model.ChatRole
-import domain.statefulagent.MemoryLayerAgentService
+import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.UserProfileRepository
-import domain.statefulagent.model.AssistantMemory
-import domain.statefulagent.model.LongTermMemory
-import domain.statefulagent.model.TaskContext
+import domain.statefulagent.model.OrchestrationEvent
+import domain.statefulagent.model.TaskStage
 import kotlinx.coroutines.runBlocking
 import presentation.common.ConsoleInput
 import presentation.common.clearThinkingLine
 import presentation.common.launchThinkingIndicator
 
 class StatefulAgentCli(
-    private val agentService: MemoryLayerAgentService,
+    private val agentService: StatefulAgentService,
     private val userProfileRepository: UserProfileRepository,
     private val consoleInput: ConsoleInput = ConsoleInput(),
 ) {
@@ -34,79 +31,53 @@ class StatefulAgentCli(
                     return@runBlocking
                 }
 
-                input.startsWith(MEMORY_COMMAND) -> {
-                    handleMemoryCommand(input)
-                }
-
                 input.startsWith(PROFILE_COMMAND) -> {
                     handleProfileCommand(input)
                 }
 
-                input == CLEAR_SHORT_COMMAND -> {
-                    agentService.clearShortTermMemory()
-                    println("Краткосрочная память очищена")
-                    println()
-                }
-
-                input == CLEAR_WORK_COMMAND -> {
-                    agentService.clearWorkingMemory()
-                    println("Рабочая память очищена")
-                    println()
+                input.startsWith(CLEAR_COMMAND) -> {
+                    handleClearCommand(input)
                 }
 
                 else -> {
                     val thinkingJob = launchThinkingIndicator()
 
-                    val reply = try {
-                        agentService.sendMessage(input)
-                    } finally {
+                    try {
+                        var firstEventReceived = false
+                        var hasRenderedEvent = false
+
+                        agentService.run(
+                            text = input,
+                            onEvent = { event ->
+                                if (!firstEventReceived) {
+                                    thinkingJob.cancel()
+                                    clearThinkingLine()
+                                    firstEventReceived = true
+                                }
+
+                                renderEvent(
+                                    event = event,
+                                    printTopSpacing = hasRenderedEvent,
+                                )
+
+                                hasRenderedEvent = true
+                            },
+                        )
+
+                        if (!firstEventReceived) {
+                            thinkingJob.cancel()
+                            clearThinkingLine()
+                        }
+                    } catch (e: Exception) {
                         thinkingJob.cancel()
                         clearThinkingLine()
-                    }
-
-                    println()
-                    println("Агент:")
-                    println(reply.message.content)
-
-                    reply.responseTimeMs?.let { responseTimeMs ->
-                        println()
-                        println("Time: ${responseTimeMs}ms")
-                    }
-
-                    reply.tokenUsage?.let { usage ->
-                        println(
-                            "API: prompt=${usage.promptTokens ?: "?"}, " +
-                                    "completion=${usage.completionTokens ?: "?"}, " +
-                                    "total=${usage.totalTokens ?: "?"}"
-                        )
+                        println("Ошибка: ${e.message}")
                     }
 
                     println()
                 }
             }
         }
-    }
-
-    private suspend fun handleMemoryCommand(input: String) {
-        val argument = input
-            .substringAfter(" ", missingDelimiterValue = "")
-            .trim()
-            .lowercase()
-
-        val memory = agentService.getMemory()
-
-        when (argument) {
-            "", "all" -> printAllMemory(memory)
-            "short" -> printShortTermMemory(memory.shortTermMemory)
-            "work", "working" -> printWorkingMemory(memory.workingMemory)
-            "long" -> printLongTermMemory(memory.longTermMemory)
-            else -> {
-                println("Неизвестный слой памяти: $argument")
-                println("Доступно: /memory, /memory short, /memory work, /memory long")
-            }
-        }
-
-        println()
     }
 
     private suspend fun handleProfileCommand(input: String) {
@@ -172,112 +143,115 @@ class StatefulAgentCli(
         println()
     }
 
-    private fun printAllMemory(memory: AssistantMemory) {
-        printShortTermMemory(memory.shortTermMemory)
-        println()
-        printWorkingMemory(memory.workingMemory)
-        println()
-        printLongTermMemory(memory.longTermMemory)
-    }
+    private suspend fun handleClearCommand(input: String) {
+        val parts = input
+            .split(" ")
+            .filter { part -> part.isNotBlank() }
 
-    private fun printShortTermMemory(messages: List<ChatMessage>) {
-        println("=== Краткосрочная память: текущий диалог ===")
+        val action = parts.getOrNull(1)?.lowercase() ?: "all"
 
-        if (messages.isEmpty()) {
-            println("Пусто")
-            return
-        }
+        when (action) {
+            "short" -> {
+                agentService.clearShortTermMemory()
+                println("Краткосрочная память очищена")
+            }
 
-        messages.forEachIndexed { index, message ->
-            println("${index + 1}. ${message.role.toDisplayName()}: ${message.content}")
-        }
-    }
+            "work" -> {
+                agentService.clearWorkingMemory()
+                println("Рабочая память очищена")
+            }
 
-    private fun printWorkingMemory(taskContext: TaskContext) {
-        println("=== Рабочая память: контекст текущей задачи ===")
+            "task" -> {
+                agentService.resetTaskState()
+                println("Состояние задачи и артефакты очищены")
+            }
 
-        if (taskContext.isEmpty) {
-            println("Пусто")
-            return
-        }
+            "all" -> {
+                agentService.clearShortTermMemory()
+                agentService.clearWorkingMemory()
+                agentService.resetTaskState()
+                println("Краткосрочная память, рабочая память, состояние задачи и артефакты очищены")
+            }
 
-        taskContext.taskName?.let { println("Название задачи: $it") }
-        taskContext.goal?.let { println("Цель: $it") }
-        taskContext.currentStep?.let { println("Текущий этап: $it") }
-
-        printList("Выполнено", taskContext.completedItems)
-        printList("Осталось сделать", taskContext.pendingItems)
-        printList("Решения", taskContext.decisions)
-        printList("Ограничения", taskContext.constraints)
-    }
-
-    private fun printLongTermMemory(longTermMemory: LongTermMemory) {
-        println("=== Долговременная память: профиль, решения, знания ===")
-
-        if (longTermMemory.isEmpty) {
-            println("Пусто")
-            return
-        }
-
-        printMarkdownBlock("Профиль пользователя", longTermMemory.profile)
-        printMarkdownBlock("Устойчивые решения", longTermMemory.decisions)
-        printMarkdownBlock("Знания", longTermMemory.knowledge)
-    }
-
-    private fun printList(
-        title: String,
-        items: List<String>,
-    ) {
-        println("$title:")
-
-        if (items.isEmpty()) {
-            println("- нет")
-        } else {
-            items.forEach { item ->
-                println("- $item")
+            else -> {
+                println("Неизвестная команда очистки: $action")
+                println("Доступно: short, work, task, all")
             }
         }
-    }
 
-    private fun printMarkdownBlock(
-        title: String,
-        content: String,
-    ) {
         println()
-        println("### $title")
-
-        if (content.isBlank()) {
-            println("пусто")
-        } else {
-            println(content.trim())
-        }
-    }
-
-    private fun ChatRole.toDisplayName(): String {
-        return when (this) {
-            ChatRole.SYSTEM -> "system"
-            ChatRole.USER -> "user"
-            ChatRole.ASSISTANT -> "assistant"
-        }
     }
 
     private fun printHeader() {
         println("Stateful Agent")
         println("Команды:")
-        println("$MEMORY_COMMAND [all|short|work|long] — показать слои памяти")
         println("$PROFILE_COMMAND [current|list|show|switch <name>] — управление профилями")
-        println("$CLEAR_SHORT_COMMAND — очистить краткосрочную память")
-        println("$CLEAR_WORK_COMMAND — очистить рабочую память")
+        println("$CLEAR_COMMAND [short|work|task|all] — очистка памяти/состояния")
         println("$EXIT_COMMAND — выйти")
         println()
     }
 
+    private fun renderEvent(
+        event: OrchestrationEvent,
+        printTopSpacing: Boolean,
+    ) {
+        when (event) {
+            is OrchestrationEvent.StageStarted -> {
+                if (printTopSpacing) {
+                    println()
+                }
+
+                println("${ConsoleColor.GRAY}Этап: ${event.stage}${ConsoleColor.RESET}")
+                println()
+            }
+
+            is OrchestrationEvent.StageFinished -> {
+                println("${stageColor(event.stage)}${stageName(event.stage)}:${ConsoleColor.RESET}")
+                println(event.answer.trim())
+                println()
+                println(
+                    "${ConsoleColor.GRAY}Состояние: ${event.nextState.stage} | " +
+                            "${event.nextState.currentStep} | " +
+                            "${event.nextState.expectedAction}" +
+                            ConsoleColor.RESET
+                )
+            }
+
+            is OrchestrationEvent.Finished -> Unit
+        }
+    }
+
     private companion object {
         const val USER_INPUT_PREFIX = "Вы: "
-        const val MEMORY_COMMAND = "/memory"
         const val PROFILE_COMMAND = "/profile"
-        const val CLEAR_SHORT_COMMAND = "/clear-short"
-        const val CLEAR_WORK_COMMAND = "/clear-work"
+        const val CLEAR_COMMAND = "/clear"
         const val EXIT_COMMAND = "/exit"
+    }
+}
+
+private object ConsoleColor {
+    const val RESET = "\u001B[0m"
+    const val GRAY = "\u001B[90m"
+    const val CYAN = "\u001B[36m"
+    const val YELLOW = "\u001B[33m"
+    const val GREEN = "\u001B[32m"
+    const val RED = "\u001B[31m"
+}
+
+private fun stageName(stage: TaskStage): String {
+    return when (stage) {
+        TaskStage.PLANNING -> "PlanningAgent"
+        TaskStage.EXECUTION -> "ExecutionAgent"
+        TaskStage.VALIDATION -> "ValidationAgent"
+        TaskStage.DONE -> "Done"
+    }
+}
+
+private fun stageColor(stage: TaskStage): String {
+    return when (stage) {
+        TaskStage.PLANNING -> ConsoleColor.YELLOW
+        TaskStage.EXECUTION -> ConsoleColor.CYAN
+        TaskStage.VALIDATION -> ConsoleColor.GREEN
+        TaskStage.DONE -> ConsoleColor.GREEN
     }
 }
