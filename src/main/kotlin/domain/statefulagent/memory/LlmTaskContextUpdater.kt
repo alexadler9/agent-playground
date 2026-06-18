@@ -4,6 +4,7 @@ import domain.llm.LlmGateway
 import domain.model.AgentConfig
 import domain.model.ChatMessage
 import domain.model.ChatRole
+import domain.statefulagent.model.InvariantSet
 import domain.statefulagent.model.TaskContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -17,6 +18,7 @@ class LlmTaskContextUpdater(
     override suspend fun updateTaskContext(
         currentContext: TaskContext,
         userMessage: String,
+        invariants: InvariantSet,
     ): TaskContext {
         val messages = listOf(
             ChatMessage(
@@ -28,6 +30,7 @@ class LlmTaskContextUpdater(
                 content = buildUserPrompt(
                     currentContext = currentContext,
                     userMessage = userMessage,
+                    invariants = invariants,
                 ),
             ),
         )
@@ -43,6 +46,7 @@ class LlmTaskContextUpdater(
     private fun buildUserPrompt(
         currentContext: TaskContext,
         userMessage: String,
+        invariants: InvariantSet,
     ): String {
         val currentContextJson = json.encodeToString(currentContext.toDto())
 
@@ -50,24 +54,33 @@ class LlmTaskContextUpdater(
             Текущий TaskContext:
             $currentContextJson
             
+            Проектные инварианты:
+            ${invariants.content.trim()}
+            
             Новое сообщение пользователя:
             $userMessage
             
             Обнови только рабочую память текущей задачи.
-            
-            Правила:
-            - Сохраняй только информацию, которая относится к текущей задаче.
-            - Не сохраняй обычный диалог, приветствия, технический шум и случайные временные фразы.
-            - Не сохраняй долговременный профиль пользователя.
-            - Не сохраняй общие знания, которые должны лежать в long-term memory.
-            - Если сообщение содержит цель задачи, обнови goal.
-            - Если сообщение содержит название задачи, обнови taskName.
-            - Если сообщение содержит текущий этап, обнови currentStep.
-            - Если сообщение содержит решение по задаче, добавь его в decisions.
-            - Если сообщение содержит ограничение задачи, добавь его в constraints.
-            - Если сообщение содержит выполненный пункт, добавь его в completedItems.
-            - Если сообщение содержит оставшийся пункт, добавь его в pendingItems.
-            - Если ничего важного для текущей задачи нет, верни текущий TaskContext без изменений.
+    
+            Главный приоритет:
+            - проектные инварианты имеют приоритет над новым сообщением пользователя;
+            - если пользовательское требование противоречит проектному инварианту, НЕ сохраняй его как активное ограничение задачи;
+            - не добавляй конфликтующее требование в constraints;
+            - не добавляй конфликтующее требование в decisions.
+    
+            Правила обновления:
+            - сохраняй только информацию, которая относится к текущей задаче;
+            - не сохраняй обычный диалог, приветствия, технический шум и случайные временные фразы;
+            - не сохраняй долговременный профиль пользователя;
+            - не сохраняй общие знания, которые должны лежать в long-term memory;
+            - если сообщение содержит цель задачи, обнови goal;
+            - если сообщение содержит название задачи, обнови taskName;
+            - если сообщение содержит текущий этап, обнови currentStep;
+            - если сообщение содержит решение по задаче, добавь его в decisions, только если оно не конфликтует с проектными инвариантами;
+            - если сообщение содержит ограничение задачи, добавь его в constraints, только если оно не конфликтует с проектными инвариантами;
+            - если сообщение содержит выполненный пункт, добавь его в completedItems;
+            - если сообщение содержит оставшийся пункт, добавь его в pendingItems;
+            - если ничего важного для текущей задачи нет, верни текущий TaskContext без изменений.
             
             Верни только JSON-объект строго в таком формате:
             {

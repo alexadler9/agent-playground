@@ -6,6 +6,7 @@ import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.JsonTaskArtifactRepository
 import data.statefulagent.memory.JsonTaskContextRepository
 import data.statefulagent.memory.JsonTaskStateRepository
+import data.statefulagent.memory.MarkdownInvariantRepository
 import data.statefulagent.memory.MarkdownLongTermMemoryRepository
 import data.statefulagent.memory.MarkdownUserProfileRepository
 import domain.model.AgentConfig
@@ -78,7 +79,6 @@ fun main() = runBlocking {
         llmGateway = llmGateway,
         config = AgentConfig(
             model = AppConfig.MODEL,
-            systemPrompt = "Ты извлекаешь рабочую память текущей задачи",
             maxTokens = 1000,
             temperature = 0.0,
         ),
@@ -87,12 +87,6 @@ fun main() = runBlocking {
 
     val stageAgentConfig = AgentConfig(
         model = AppConfig.MODEL,
-        systemPrompt = """
-            Ты stage agent внутри stateful AI-ассистента.
-            Отвечай на русском языке.
-            Строго соблюдай роль текущего этапа.
-            Возвращай только JSON в формате, который указан в system prompt.
-        """.trimIndent(),
         maxTokens = 1_200,
         temperature = 0.2,
     )
@@ -113,6 +107,9 @@ fun main() = runBlocking {
         taskArtifactRepository = JsonTaskArtifactRepository(
             storageFile = storageRoot.resolve("task-artifacts.json"),
             json = json,
+        ),
+        invariantRepository = MarkdownInvariantRepository(
+            storageFile = storageRoot.resolve("invariants.md"),
         ),
         transitionValidator = TaskTransitionValidator(),
         stageAgents = listOf(

@@ -5,6 +5,7 @@ import domain.model.AgentReply
 import domain.model.ChatMessage
 import domain.model.ChatRole
 import domain.model.ChatSession
+import domain.statefulagent.memory.InvariantRepository
 import domain.statefulagent.memory.LongTermMemoryRepository
 import domain.statefulagent.memory.TaskArtifactRepository
 import domain.statefulagent.memory.TaskContextRepository
@@ -12,6 +13,7 @@ import domain.statefulagent.memory.TaskContextUpdater
 import domain.statefulagent.memory.TaskStateRepository
 import domain.statefulagent.model.AssistantMemory
 import domain.statefulagent.model.ExpectedAction
+import domain.statefulagent.model.InvariantSet
 import domain.statefulagent.model.OrchestrationEvent
 import domain.statefulagent.model.OrchestrationResult
 import domain.statefulagent.model.StageAgentResult
@@ -32,6 +34,7 @@ class StatefulAgentService(
     private val taskContextUpdater: TaskContextUpdater,
     private val taskStateRepository: TaskStateRepository,
     private val taskArtifactRepository: TaskArtifactRepository,
+    private val invariantRepository: InvariantRepository,
     private val transitionValidator: TaskTransitionValidator,
     private val stageAgents: List<StageAgent>,
 ) {
@@ -41,11 +44,13 @@ class StatefulAgentService(
         onEvent: suspend (OrchestrationEvent) -> Unit = {}
     ): OrchestrationResult {
         val previousHistory = sessionHistoryRepository.getMessages(session)
+        val invariants = invariantRepository.getInvariants()
 
         val currentTaskContext = taskContextRepository.getTaskContext()
         val updatedTaskContext = taskContextUpdater.updateTaskContext(
             currentContext = currentTaskContext,
             userMessage = text,
+            invariants = invariants
         )
         taskContextRepository.saveTaskContext(updatedTaskContext)
 
@@ -85,6 +90,7 @@ class StatefulAgentService(
                 memory = memory,
                 taskState = taskState,
                 artifacts = artifacts,
+                invariants = invariants,
                 userMessage = messageForStage,
             )
 
@@ -220,6 +226,7 @@ class StatefulAgentService(
         memory: AssistantMemory,
         taskState: TaskState,
         artifacts: Map<TaskStage, TaskArtifact>,
+        invariants: InvariantSet,
         userMessage: String,
     ): StageAgentResult {
         val normalizedMessage = userMessage.trim().lowercase()
@@ -256,6 +263,7 @@ class StatefulAgentService(
             memory = memory,
             taskState = taskState,
             artifacts = artifacts,
+            invariants = invariants,
             userMessage = userMessage,
         )
     }
