@@ -217,6 +217,10 @@ class StatefulAgentCli(
                 )
             }
 
+            is OrchestrationEvent.AutoStepLimitReached -> {
+                println("${ConsoleColor.RED}Оркестратор: достигнут лимит автоматических шагов.${ConsoleColor.RESET}")
+            }
+
             is OrchestrationEvent.Finished -> Unit
         }
     }

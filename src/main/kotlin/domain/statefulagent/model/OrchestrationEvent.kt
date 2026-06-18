@@ -15,4 +15,8 @@ sealed interface OrchestrationEvent {
     data class Finished(
         val finalState: TaskState,
     ) : OrchestrationEvent
+
+    data class AutoStepLimitReached(
+        val state: TaskState,
+    ) : OrchestrationEvent
 }

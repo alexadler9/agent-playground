@@ -135,6 +135,14 @@ class StatefulAgentService(
             autoStep++
         }
 
+        if (!shouldStop(taskState)) {
+            onEvent(
+                OrchestrationEvent.AutoStepLimitReached(
+                    state = taskState,
+                ),
+            )
+        }
+
         val fullAnswer = answers.joinToString(separator = "\n\n")
 
         val assistantMessage = ChatMessage(
@@ -304,16 +312,39 @@ class StatefulAgentService(
     }
 
     private fun String.isApprovalMessage(): Boolean {
-        return this == "да" ||
-                this == "ок" ||
-                this == "окей" ||
-                this.contains("утверждаю") ||
-                this.contains("подтверждаю") ||
-                this.contains("план ок") ||
-                this.contains("соглас")
+        val normalized = trim().lowercase()
+
+        val negativeMarkers = listOf(
+            "не подтверждаю",
+            "не утверждаю",
+            "не соглас",
+            "пока не",
+            "нет",
+            "надо поправить",
+            "нужно поправить",
+            "измени",
+            "поменяй",
+            "добавь",
+            "убери",
+        )
+
+        if (negativeMarkers.any { marker -> normalized.contains(marker) }) {
+            return false
+        }
+
+        return normalized == "да" ||
+                normalized == "ок" ||
+                normalized == "окей" ||
+                normalized == "ок, подтверждаю" ||
+                normalized == "да, подтверждаю" ||
+                normalized.contains("утверждаю") ||
+                normalized.contains("подтверждаю") ||
+                normalized.contains("план ок") ||
+                normalized.contains("согласен") ||
+                normalized.contains("согласна")
     }
 
     private companion object {
-        const val MAX_AUTO_STEPS = 5
+        const val MAX_AUTO_STEPS = 8
     }
 }
