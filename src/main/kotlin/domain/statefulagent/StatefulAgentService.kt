@@ -4,30 +4,15 @@ import domain.memory.SessionHistoryRepository
 import domain.model.ChatMessage
 import domain.model.ChatRole
 import domain.model.ChatSession
-import domain.statefulagent.memory.InvariantRepository
-import domain.statefulagent.memory.LongTermMemoryRepository
-import domain.statefulagent.memory.TaskArtifactRepository
-import domain.statefulagent.memory.TaskContextRepository
-import domain.statefulagent.memory.TaskContextUpdater
-import domain.statefulagent.memory.TaskStateRepository
-import domain.statefulagent.model.AssistantMemory
-import domain.statefulagent.model.ExpectedAction
-import domain.statefulagent.model.InvariantSet
-import domain.statefulagent.model.OrchestrationEvent
-import domain.statefulagent.model.OrchestrationResult
-import domain.statefulagent.model.StageAgentResult
-import domain.statefulagent.model.StageReport
-import domain.statefulagent.model.TaskArtifact
-import domain.statefulagent.model.TaskStage
-import domain.statefulagent.model.TaskState
+import domain.statefulagent.memory.*
+import domain.statefulagent.model.*
 import domain.statefulagent.orchestration.OrchestrationContextPreparer
+import domain.statefulagent.orchestration.OrchestrationStepRunner
 import domain.statefulagent.stage.StageAgent
 import domain.statefulagent.stage.StageAgentResultNormalizer
 import domain.statefulagent.stage.StageArtifactSaver
-import domain.statefulagent.stage.StageRunRequest
 import domain.statefulagent.stage.StageRunner
 import domain.statefulagent.state.TaskStateResolver
-import domain.statefulagent.validation.TaskTransitionValidationResult
 import domain.statefulagent.validation.TaskTransitionValidator
 
 class StatefulAgentService(
@@ -60,6 +45,13 @@ class StatefulAgentService(
         stageAgents = stageAgents,
         stageAgentResultNormalizer = stageResultNormalizer,
     ),
+    private val orchestrationStepRunner: OrchestrationStepRunner = OrchestrationStepRunner(
+        taskArtifactRepository = taskArtifactRepository,
+        taskStateRepository = taskStateRepository,
+        stageRunner = stageRunner,
+        stageArtifactSaver = stageArtifactSaver,
+        taskStateResolver = taskStateResolver,
+    ),
 ) {
 
     suspend fun run(
@@ -81,60 +73,27 @@ class StatefulAgentService(
         var autoStep = 0
 
         while (autoStep < MAX_AUTO_STEPS) {
-            val artifacts = taskArtifactRepository.getArtifacts()
-
-            onEvent(
-                OrchestrationEvent.StageStarted(
-                    stage = taskState.stage,
-                ),
-            )
-
-            val stageResult = stageRunner.run(
-                StageRunRequest(
-                    memory = memory,
-                    taskState = taskState,
-                    artifacts = artifacts,
-                    invariants = invariants,
-                    userMessage = messageForStage,
-                ),
-            )
-
-            stageArtifactSaver.saveIfNeeded(
-                currentStage = taskState.stage,
-                stageResult = stageResult,
-            )
-
-            val artifactsAfterStage = taskArtifactRepository.getArtifacts()
-
-            val nextTaskState = taskStateResolver.resolve(
-                currentTaskState = taskState,
-                stageResult = stageResult,
-                artifacts = artifactsAfterStage,
-            )
-
-            taskStateRepository.saveTaskState(nextTaskState)
-
-            onEvent(
-                OrchestrationEvent.StageFinished(
-                    stage = taskState.stage,
-                    answer = stageResult.answer,
-                    nextState = nextTaskState,
-                ),
+            val stepResult = orchestrationStepRunner.runStep(
+                memory = memory,
+                taskState = taskState,
+                invariants = invariants,
+                userMessage = messageForStage,
+                onEvent = onEvent,
             )
 
             reports += StageReport(
-                stage = nextTaskState.stage,
-                currentStep = nextTaskState.currentStep,
-                expectedAction = nextTaskState.expectedAction,
+                stage = stepResult.nextTaskState.stage,
+                currentStep = stepResult.nextTaskState.currentStep,
+                expectedAction = stepResult.nextTaskState.expectedAction,
             )
 
             answers += formatStageAnswer(
-                stage = taskState.stage,
-                answer = stageResult.answer,
-                nextState = nextTaskState,
+                stage = stepResult.startedStage,
+                answer = stepResult.stageResult.answer,
+                nextState = stepResult.nextTaskState,
             )
 
-            taskState = nextTaskState
+            taskState = stepResult.nextTaskState
 
             if (shouldStop(taskState)) {
                 break
