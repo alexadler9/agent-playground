@@ -31,11 +31,15 @@ class DefaultStageContextBuilder : StageContextBuilder {
             ))
             appendLine()
 
-            appendLine(buildWorkingMemoryBlock(request.memory))
-            appendLine()
+            appendLine(buildMemoryBlock(
+                stage = request.stage,
+                memory = request.memory,
+            ))
 
-            appendLine(buildLongTermMemoryBlock(request.memory))
-            appendLine()
+            if (request.stage == TaskStage.PLANNING) {
+                appendLine()
+                appendLine(buildLongTermMemoryBlock(request.memory))
+            }
 
             appendLine(buildJsonContractBlock())
         }.trim()
@@ -109,11 +113,23 @@ class DefaultStageContextBuilder : StageContextBuilder {
         }.trim()
     }
 
-    private fun buildWorkingMemoryBlock(memory: AssistantMemory): String {
+    private fun buildMemoryBlock(
+        stage: TaskStage,
+        memory: AssistantMemory,
+    ): String {
+        return when (stage) {
+            TaskStage.PLANNING -> buildPlanningMemoryBlock(memory)
+            TaskStage.EXECUTION -> buildExecutionMemoryBlock(memory)
+            TaskStage.VALIDATION -> buildValidationMemoryBlock(memory)
+            TaskStage.DONE -> buildExecutionMemoryBlock(memory)
+        }
+    }
+
+    private fun buildPlanningMemoryBlock(memory: AssistantMemory): String {
         val taskContext = memory.workingMemory
 
         return buildString {
-            appendLine("Рабочая память задачи:")
+            appendLine("Контекст для планирования:")
 
             if (taskContext.isEmpty) {
                 appendLine("Рабочая память пока пустая.")
@@ -122,13 +138,48 @@ class DefaultStageContextBuilder : StageContextBuilder {
 
             taskContext.taskName?.let { appendLine("Название задачи: $it") }
             taskContext.goal?.let { appendLine("Цель: $it") }
-            taskContext.currentStep?.let { appendLine("Текущий этап: $it") }
 
-            appendList("Выполнено", taskContext.completedItems)
-            appendList("Осталось сделать", taskContext.pendingItems)
-            appendList("Решения", taskContext.decisions)
             appendList("Ограничения", taskContext.constraints)
-        }
+            appendList("Решения", taskContext.decisions)
+            appendList("Осталось уточнить или сделать", taskContext.pendingItems)
+        }.trim()
+    }
+
+    private fun buildExecutionMemoryBlock(memory: AssistantMemory): String {
+        val taskContext = memory.workingMemory
+
+        return buildString {
+            appendLine("Контекст для выполнения:")
+
+            if (taskContext.isEmpty) {
+                appendLine("Рабочая память пока пустая.")
+                return@buildString
+            }
+
+            taskContext.goal?.let { appendLine("Цель: $it") }
+
+            appendList("Утверждённые решения", taskContext.decisions)
+            appendList("Ограничения выполнения", taskContext.constraints)
+            appendList("Что уже выполнено", taskContext.completedItems)
+            appendList("Что осталось сделать", taskContext.pendingItems)
+        }.trim()
+    }
+
+    private fun buildValidationMemoryBlock(memory: AssistantMemory): String {
+        val taskContext = memory.workingMemory
+
+        return buildString {
+            appendLine("Контекст для проверки:")
+
+            if (taskContext.isEmpty) {
+                appendLine("Рабочая память пока пустая.")
+                return@buildString
+            }
+
+            taskContext.goal?.let { appendLine("Цель: $it") }
+            appendList("Ограничения, которые нужно проверить", taskContext.constraints)
+            appendList("Принятые решения", taskContext.decisions)
+        }.trim()
     }
 
     private fun buildLongTermMemoryBlock(memory: AssistantMemory): String {
