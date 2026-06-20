@@ -22,6 +22,7 @@ import domain.statefulagent.model.TaskStage
 import domain.statefulagent.model.TaskState
 import domain.statefulagent.stage.StageAgent
 import domain.statefulagent.stage.StageAgentResultNormalizer
+import domain.statefulagent.stage.StageArtifactSaver
 import domain.statefulagent.stage.StageRunRequest
 import domain.statefulagent.stage.StageRunner
 import domain.statefulagent.state.TaskStateResolver
@@ -36,6 +37,9 @@ class StatefulAgentService(
     private val taskContextUpdater: TaskContextUpdater,
     private val taskStateRepository: TaskStateRepository,
     private val taskArtifactRepository: TaskArtifactRepository,
+    private val stageArtifactSaver: StageArtifactSaver = StageArtifactSaver(
+        taskArtifactRepository = taskArtifactRepository,
+    ),
     private val invariantRepository: InvariantRepository,
     private val transitionValidator: TaskTransitionValidator,
     private val stageResultNormalizer: StageAgentResultNormalizer = StageAgentResultNormalizer(),
@@ -106,15 +110,10 @@ class StatefulAgentService(
                 ),
             )
 
-            if (stageResult.shouldSaveArtifact) {
-                taskArtifactRepository.saveArtifact(
-                    TaskArtifact(
-                        stage = taskState.stage,
-                        content = stageResult.answer,
-                        createdAtMillis = System.currentTimeMillis(),
-                    ),
-                )
-            }
+            stageArtifactSaver.saveIfNeeded(
+                currentStage = taskState.stage,
+                stageResult = stageResult,
+            )
 
             val artifactsAfterStage = taskArtifactRepository.getArtifacts()
 
