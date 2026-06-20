@@ -22,6 +22,8 @@ import domain.statefulagent.model.TaskStage
 import domain.statefulagent.model.TaskState
 import domain.statefulagent.stage.StageAgent
 import domain.statefulagent.stage.StageAgentResultNormalizer
+import domain.statefulagent.stage.StageRunRequest
+import domain.statefulagent.stage.StageRunner
 import domain.statefulagent.state.TaskStateResolver
 import domain.statefulagent.validation.TaskTransitionValidationResult
 import domain.statefulagent.validation.TaskTransitionValidator
@@ -41,6 +43,10 @@ class StatefulAgentService(
         transitionValidator = transitionValidator,
     ),
     private val stageAgents: List<StageAgent>,
+    private val stageRunner: StageRunner = StageRunner(
+        stageAgents = stageAgents,
+        stageAgentResultNormalizer = stageResultNormalizer,
+    ),
 ) {
 
     suspend fun run(
@@ -90,12 +96,14 @@ class StatefulAgentService(
                 ),
             )
 
-            val stageResult = handleByCurrentState(
-                memory = memory,
-                taskState = taskState,
-                artifacts = artifacts,
-                invariants = invariants,
-                userMessage = messageForStage,
+            val stageResult = stageRunner.run(
+                StageRunRequest(
+                    memory = memory,
+                    taskState = taskState,
+                    artifacts = artifacts,
+                    invariants = invariants,
+                    userMessage = messageForStage,
+                ),
             )
 
             if (stageResult.shouldSaveArtifact) {
@@ -227,43 +235,6 @@ class StatefulAgentService(
 
     suspend fun clearWorkingMemory() {
         taskContextRepository.clear()
-    }
-
-    private suspend fun handleByCurrentState(
-        memory: AssistantMemory,
-        taskState: TaskState,
-        artifacts: Map<TaskStage, TaskArtifact>,
-        invariants: InvariantSet,
-        userMessage: String,
-    ): StageAgentResult {
-        val systemResult = stageResultNormalizer.buildSystemResultOrNull(
-            taskState = taskState,
-            userMessage = userMessage,
-        )
-
-        if (systemResult != null) {
-            return systemResult
-        }
-
-        val stageAgent = getStageAgent(taskState.stage)
-
-        val stageResult = stageAgent.handle(
-            memory = memory,
-            taskState = taskState,
-            artifacts = artifacts,
-            invariants = invariants,
-            userMessage = userMessage,
-        )
-
-        return stageResultNormalizer.normalize(
-            taskState = taskState,
-            stageResult = stageResult,
-        )
-    }
-
-    private fun getStageAgent(stage: TaskStage): StageAgent {
-        return stageAgents.firstOrNull { agent -> agent.stage == stage }
-            ?: error("Stage agent is not registered for stage: $stage")
     }
 
     private companion object {
