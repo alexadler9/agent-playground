@@ -1,7 +1,6 @@
 package domain.statefulagent
 
 import domain.memory.SessionHistoryRepository
-import domain.model.AgentReply
 import domain.model.ChatMessage
 import domain.model.ChatRole
 import domain.model.ChatSession
@@ -21,11 +20,11 @@ import domain.statefulagent.model.StageReport
 import domain.statefulagent.model.TaskArtifact
 import domain.statefulagent.model.TaskStage
 import domain.statefulagent.model.TaskState
-import domain.statefulagent.model.TransitionReason
 import domain.statefulagent.stage.StageAgent
+import domain.statefulagent.stage.StageAgentResultNormalizer
+import domain.statefulagent.state.TaskStateResolver
 import domain.statefulagent.validation.TaskTransitionValidationResult
 import domain.statefulagent.validation.TaskTransitionValidator
-import kotlin.time.measureTimedValue
 
 class StatefulAgentService(
     private val session: ChatSession,
@@ -37,6 +36,10 @@ class StatefulAgentService(
     private val taskArtifactRepository: TaskArtifactRepository,
     private val invariantRepository: InvariantRepository,
     private val transitionValidator: TaskTransitionValidator,
+    private val stageResultNormalizer: StageAgentResultNormalizer = StageAgentResultNormalizer(),
+    private val taskStateResolver: TaskStateResolver = TaskStateResolver(
+        transitionValidator = transitionValidator,
+    ),
     private val stageAgents: List<StageAgent>,
 ) {
 
@@ -107,7 +110,7 @@ class StatefulAgentService(
 
             val artifactsAfterStage = taskArtifactRepository.getArtifacts()
 
-            val nextTaskState = resolveNextTaskState(
+            val nextTaskState = taskStateResolver.resolve(
                 currentTaskState = taskState,
                 stageResult = stageResult,
                 artifacts = artifactsAfterStage,
@@ -233,33 +236,13 @@ class StatefulAgentService(
         invariants: InvariantSet,
         userMessage: String,
     ): StageAgentResult {
-        val normalizedMessage = userMessage.trim().lowercase()
+        val systemResult = stageResultNormalizer.buildSystemResultOrNull(
+            taskState = taskState,
+            userMessage = userMessage,
+        )
 
-        if (
-            taskState.stage == TaskStage.PLANNING &&
-            taskState.expectedAction == ExpectedAction.APPROVE_PLAN &&
-            normalizedMessage.isApprovalMessage()
-        ) {
-            return StageAgentResult(
-                answer = "План утверждён. Перехожу к этапу execution",
-                suggestedNextStage = TaskStage.EXECUTION,
-                nextCurrentStep = "Выполнение утверждённого плана",
-                nextExpectedAction = ExpectedAction.AUTO_CONTINUE,
-                shouldSaveArtifact = false,
-                transitionReason = TransitionReason.USER_APPROVED_PLAN,
-            )
-        }
-
-        if (
-            taskState.stage == TaskStage.DONE &&
-            normalizedMessage.contains("продолж")
-        ) {
-            return StageAgentResult(
-                answer = "Задача уже находится в состоянии DONE. Можно начать новую задачу через сброс состояния",
-                suggestedNextStage = null,
-                nextCurrentStep = taskState.currentStep,
-                nextExpectedAction = ExpectedAction.NONE,
-            )
+        if (systemResult != null) {
+            return systemResult
         }
 
         val stageAgent = getStageAgent(taskState.stage)
@@ -272,90 +255,15 @@ class StatefulAgentService(
             userMessage = userMessage,
         )
 
-        return if (taskState.stage == TaskStage.VALIDATION) {
-            stageResult.withValidationTransitionReason()
-        } else {
-            stageResult
-        }
-    }
-
-    private fun StageAgentResult.withValidationTransitionReason(): StageAgentResult {
-        return when (suggestedNextStage) {
-            TaskStage.DONE -> copy(
-                transitionReason = TransitionReason.VALIDATION_ACCEPTED,
-            )
-
-            TaskStage.EXECUTION -> copy(
-                transitionReason = TransitionReason.VALIDATION_REJECTED,
-            )
-
-            else -> this
-        }
-    }
-
-    private fun resolveNextTaskState(
-        currentTaskState: TaskState,
-        stageResult: StageAgentResult,
-        artifacts: Map<TaskStage, TaskArtifact>,
-    ): TaskState {
-        val validationResult = transitionValidator.validate(
-            currentState = currentTaskState,
+        return stageResultNormalizer.normalize(
+            taskState = taskState,
             stageResult = stageResult,
-            artifacts = artifacts,
-        )
-
-        if (validationResult is TaskTransitionValidationResult.Invalid) {
-            return currentTaskState.copy(
-                currentStep = validationResult.reason,
-                expectedAction = ExpectedAction.USER_MESSAGE,
-            )
-        }
-
-        val nextStage = stageResult.suggestedNextStage ?: currentTaskState.stage
-
-        return TaskState(
-            stage = nextStage,
-            currentStep = stageResult.nextCurrentStep,
-            expectedAction = stageResult.nextExpectedAction,
         )
     }
 
     private fun getStageAgent(stage: TaskStage): StageAgent {
         return stageAgents.firstOrNull { agent -> agent.stage == stage }
             ?: error("Stage agent is not registered for stage: $stage")
-    }
-
-    private fun String.isApprovalMessage(): Boolean {
-        val normalized = trim().lowercase()
-
-        val negativeMarkers = listOf(
-            "не подтверждаю",
-            "не утверждаю",
-            "не соглас",
-            "пока не",
-            "нет",
-            "надо поправить",
-            "нужно поправить",
-            "измени",
-            "поменяй",
-            "добавь",
-            "убери",
-        )
-
-        if (negativeMarkers.any { marker -> normalized.contains(marker) }) {
-            return false
-        }
-
-        return normalized == "да" ||
-                normalized == "ок" ||
-                normalized == "окей" ||
-                normalized == "ок, подтверждаю" ||
-                normalized == "да, подтверждаю" ||
-                normalized.contains("утверждаю") ||
-                normalized.contains("подтверждаю") ||
-                normalized.contains("план ок") ||
-                normalized.contains("согласен") ||
-                normalized.contains("согласна")
     }
 
     private companion object {
