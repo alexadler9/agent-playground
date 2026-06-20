@@ -12,6 +12,8 @@ import domain.statefulagent.stage.StageAgent
 import domain.statefulagent.stage.StageAgentResultNormalizer
 import domain.statefulagent.stage.StageArtifactSaver
 import domain.statefulagent.stage.StageRunner
+import domain.statefulagent.stage.execution.ExecutionStageExecutor
+import domain.statefulagent.stage.execution.SingleExecutionStageExecutor
 import domain.statefulagent.state.TaskStateResolver
 import domain.statefulagent.validation.TaskTransitionValidator
 
@@ -41,9 +43,15 @@ class StatefulAgentService(
         transitionValidator = transitionValidator,
     ),
     private val stageAgents: List<StageAgent>,
+    private val executionStageExecutor: ExecutionStageExecutor = SingleExecutionStageExecutor(
+        executionStageAgent = stageAgents.first { agent ->
+            agent.stage == TaskStage.EXECUTION
+        },
+    ),
     private val stageRunner: StageRunner = StageRunner(
         stageAgents = stageAgents,
         stageAgentResultNormalizer = stageResultNormalizer,
+        executionStageExecutor = executionStageExecutor,
     ),
     private val orchestrationStepRunner: OrchestrationStepRunner = OrchestrationStepRunner(
         taskArtifactRepository = taskArtifactRepository,

@@ -2,6 +2,7 @@ package domain.statefulagent.stage
 
 import domain.statefulagent.model.StageAgentResult
 import domain.statefulagent.model.TaskStage
+import domain.statefulagent.stage.execution.ExecutionStageExecutor
 
 /**
  * Запускает stage-agent для текущего состояния задачи.
@@ -12,6 +13,7 @@ import domain.statefulagent.model.TaskStage
 class StageRunner(
     private val stageAgents: List<StageAgent>,
     private val stageAgentResultNormalizer: StageAgentResultNormalizer,
+    private val executionStageExecutor: ExecutionStageExecutor,
 ) {
 
     suspend fun run(
@@ -26,15 +28,19 @@ class StageRunner(
             return systemResult
         }
 
-        val stageAgent = getStageAgent(request.taskState.stage)
+        val stageResult = if (request.taskState.stage == TaskStage.EXECUTION) {
+            executionStageExecutor.execute(request)
+        } else {
+            val stageAgent = getStageAgent(request.taskState.stage)
 
-        val stageResult = stageAgent.handle(
-            memory = request.memory,
-            taskState = request.taskState,
-            artifacts = request.artifacts,
-            invariants = request.invariants,
-            userMessage = request.userMessage,
-        )
+            stageAgent.handle(
+                memory = request.memory,
+                taskState = request.taskState,
+                artifacts = request.artifacts,
+                invariants = request.invariants,
+                userMessage = request.userMessage,
+            )
+        }
 
         return stageAgentResultNormalizer.normalize(
             taskState = request.taskState,
