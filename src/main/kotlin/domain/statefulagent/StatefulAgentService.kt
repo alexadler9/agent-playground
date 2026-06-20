@@ -20,6 +20,7 @@ import domain.statefulagent.model.StageReport
 import domain.statefulagent.model.TaskArtifact
 import domain.statefulagent.model.TaskStage
 import domain.statefulagent.model.TaskState
+import domain.statefulagent.orchestration.OrchestrationContextPreparer
 import domain.statefulagent.stage.StageAgent
 import domain.statefulagent.stage.StageAgentResultNormalizer
 import domain.statefulagent.stage.StageArtifactSaver
@@ -41,6 +42,14 @@ class StatefulAgentService(
         taskArtifactRepository = taskArtifactRepository,
     ),
     private val invariantRepository: InvariantRepository,
+    private val orchestrationContextPreparer: OrchestrationContextPreparer = OrchestrationContextPreparer(
+        session = session,
+        sessionHistoryRepository = sessionHistoryRepository,
+        taskContextRepository = taskContextRepository,
+        longTermMemoryRepository = longTermMemoryRepository,
+        taskContextUpdater = taskContextUpdater,
+        invariantRepository = invariantRepository,
+    ),
     private val transitionValidator: TaskTransitionValidator,
     private val stageResultNormalizer: StageAgentResultNormalizer = StageAgentResultNormalizer(),
     private val taskStateResolver: TaskStateResolver = TaskStateResolver(
@@ -57,32 +66,12 @@ class StatefulAgentService(
         text: String,
         onEvent: suspend (OrchestrationEvent) -> Unit = {}
     ): OrchestrationResult {
-        val previousHistory = sessionHistoryRepository.getMessages(session)
-        val invariants = invariantRepository.getInvariants()
-
-        val currentTaskContext = taskContextRepository.getTaskContext()
-        val updatedTaskContext = taskContextUpdater.updateTaskContext(
-            currentContext = currentTaskContext,
-            userMessage = text,
-            invariants = invariants
-        )
-        taskContextRepository.saveTaskContext(updatedTaskContext)
-
-        val memory = AssistantMemory(
-            shortTermMemory = previousHistory,
-            workingMemory = updatedTaskContext,
-            longTermMemory = longTermMemoryRepository.getLongTermMemory(),
+        val preparedContext = orchestrationContextPreparer.prepare(
+            userText = text,
         )
 
-        val userMessage = ChatMessage(
-            role = ChatRole.USER,
-            content = text,
-        )
-
-        sessionHistoryRepository.appendMessage(
-            session = session,
-            message = userMessage,
-        )
+        val memory = preparedContext.memory
+        val invariants = preparedContext.invariants
 
         val answers = mutableListOf<String>()
         val reports = mutableListOf<StageReport>()
