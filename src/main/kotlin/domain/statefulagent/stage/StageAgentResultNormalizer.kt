@@ -26,6 +26,20 @@ class StageAgentResultNormalizer {
 
         if (
             taskState.stage == TaskStage.PLANNING &&
+            taskState.expectedAction != ExpectedAction.APPROVE_PLAN &&
+            normalizedMessage.isApprovalMessage()
+        ) {
+            return StageAgentResult(
+                answer = "Сейчас нечего подтверждать: план ещё не был предложен. Пожалуйста, ответьте на уточняющие вопросы или опишите задачу подробнее.",
+                suggestedNextStage = null,
+                nextCurrentStep = taskState.currentStep,
+                nextExpectedAction = taskState.expectedAction,
+                shouldSaveArtifact = false,
+            )
+        }
+
+        if (
+            taskState.stage == TaskStage.PLANNING &&
             taskState.expectedAction == ExpectedAction.APPROVE_PLAN &&
             normalizedMessage.isApprovalMessage()
         ) {
