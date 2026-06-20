@@ -5,5 +5,6 @@ data class StageAgentResult(
     val suggestedNextStage: TaskStage?,
     val nextCurrentStep: String,
     val nextExpectedAction: ExpectedAction,
+    val transitionReason: TransitionReason = TransitionReason.AGENT_SUGGESTED,
     val shouldSaveArtifact: Boolean = true,
 )

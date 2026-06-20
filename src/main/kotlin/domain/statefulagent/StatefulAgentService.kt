@@ -21,6 +21,7 @@ import domain.statefulagent.model.StageReport
 import domain.statefulagent.model.TaskArtifact
 import domain.statefulagent.model.TaskStage
 import domain.statefulagent.model.TaskState
+import domain.statefulagent.model.TransitionReason
 import domain.statefulagent.stage.StageAgent
 import domain.statefulagent.validation.TaskTransitionValidationResult
 import domain.statefulagent.validation.TaskTransitionValidator
@@ -104,9 +105,12 @@ class StatefulAgentService(
                 )
             }
 
+            val artifactsAfterStage = taskArtifactRepository.getArtifacts()
+
             val nextTaskState = resolveNextTaskState(
                 currentTaskState = taskState,
                 stageResult = stageResult,
+                artifacts = artifactsAfterStage,
             )
 
             taskStateRepository.saveTaskState(nextTaskState)
@@ -242,6 +246,7 @@ class StatefulAgentService(
                 nextCurrentStep = "Выполнение утверждённого плана",
                 nextExpectedAction = ExpectedAction.AUTO_CONTINUE,
                 shouldSaveArtifact = false,
+                transitionReason = TransitionReason.USER_APPROVED_PLAN,
             )
         }
 
@@ -259,59 +264,60 @@ class StatefulAgentService(
 
         val stageAgent = getStageAgent(taskState.stage)
 
-        return stageAgent.handle(
+        val stageResult = stageAgent.handle(
             memory = memory,
             taskState = taskState,
             artifacts = artifacts,
             invariants = invariants,
             userMessage = userMessage,
         )
+
+        return if (taskState.stage == TaskStage.VALIDATION) {
+            stageResult.withValidationTransitionReason()
+        } else {
+            stageResult
+        }
+    }
+
+    private fun StageAgentResult.withValidationTransitionReason(): StageAgentResult {
+        return when (suggestedNextStage) {
+            TaskStage.DONE -> copy(
+                transitionReason = TransitionReason.VALIDATION_ACCEPTED,
+            )
+
+            TaskStage.EXECUTION -> copy(
+                transitionReason = TransitionReason.VALIDATION_REJECTED,
+            )
+
+            else -> this
+        }
     }
 
     private fun resolveNextTaskState(
         currentTaskState: TaskState,
         stageResult: StageAgentResult,
+        artifacts: Map<TaskStage, TaskArtifact>,
     ): TaskState {
-        if (
-            currentTaskState.stage == TaskStage.PLANNING &&
-            stageResult.nextExpectedAction == ExpectedAction.APPROVE_PLAN
-        ) {
-            return currentTaskState.copy(
-                currentStep = stageResult.nextCurrentStep,
-                expectedAction = ExpectedAction.APPROVE_PLAN,
-            )
-        }
-
-        val suggestedNextStage = stageResult.suggestedNextStage
-
-        if (suggestedNextStage == null || suggestedNextStage == currentTaskState.stage) {
-            return currentTaskState.copy(
-                currentStep = stageResult.nextCurrentStep,
-                expectedAction = stageResult.nextExpectedAction,
-            )
-        }
-
-        val transitionValidation = transitionValidator.validate(
-            from = currentTaskState.stage,
-            to = suggestedNextStage,
+        val validationResult = transitionValidator.validate(
+            currentState = currentTaskState,
+            stageResult = stageResult,
+            artifacts = artifacts,
         )
 
-        return when (transitionValidation) {
-            TaskTransitionValidationResult.Valid -> {
-                TaskState(
-                    stage = suggestedNextStage,
-                    currentStep = stageResult.nextCurrentStep,
-                    expectedAction = stageResult.nextExpectedAction,
-                )
-            }
-
-            is TaskTransitionValidationResult.Invalid -> {
-                currentTaskState.copy(
-                    currentStep = "Недопустимый переход отклонён: ${transitionValidation.reason}",
-                    expectedAction = currentTaskState.expectedAction,
-                )
-            }
+        if (validationResult is TaskTransitionValidationResult.Invalid) {
+            return currentTaskState.copy(
+                currentStep = validationResult.reason,
+                expectedAction = ExpectedAction.USER_MESSAGE,
+            )
         }
+
+        val nextStage = stageResult.suggestedNextStage ?: currentTaskState.stage
+
+        return TaskState(
+            stage = nextStage,
+            currentStep = stageResult.nextCurrentStep,
+            expectedAction = stageResult.nextExpectedAction,
+        )
     }
 
     private fun getStageAgent(stage: TaskStage): StageAgent {
