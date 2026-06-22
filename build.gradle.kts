@@ -15,6 +15,7 @@ application {
 dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.mcp.kotlin.sdk)
 
     implementation(libs.retrofit.core)
     implementation(libs.okhttp.core)

@@ -9,6 +9,8 @@ import data.statefulagent.memory.JsonTaskStateRepository
 import data.statefulagent.memory.MarkdownInvariantRepository
 import data.statefulagent.memory.MarkdownLongTermMemoryRepository
 import data.statefulagent.memory.MarkdownUserProfileRepository
+import domain.mcp.McpServerConfig
+import domain.mcp.McpToolsListRunner
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.statefulagent.StatefulAgentService
@@ -27,7 +29,33 @@ import retrofit2.Retrofit
 import java.nio.file.Path
 import java.time.Duration
 
-fun main() = runBlocking {
+fun main(args: Array<String>) = runBlocking {
+    if (args.firstOrNull() == "mcp-tools") {
+        val config = McpServerConfig.everythingWindows()
+
+        println("MCP server: ${config.name}")
+        println("Command: ${config.command} ${config.args.joinToString(" ")}")
+        println()
+
+        val tools = McpToolsListRunner().loadTools(config)
+
+        println("Connection: established")
+        println()
+        println("Available tools:")
+
+        if (tools.isEmpty()) {
+            println("No tools returned")
+        } else {
+            tools.forEachIndexed { index, tool ->
+                println("${index + 1}. ${tool.name}")
+                println("   ${tool.description}")
+                println()
+            }
+        }
+
+        return@runBlocking
+    }
+
     val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(Duration.ofSeconds(30))
         .readTimeout(Duration.ofSeconds(120))
