@@ -21,6 +21,9 @@ dependencies {
     implementation(libs.okhttp.core)
     implementation(libs.retrofit.kotlinx.serialization.converter)
 
+    implementation(platform(libs.ktor.bom))
+    implementation(libs.ktor.client.cio)
+
     testImplementation(libs.kotest.runner.junit5)
     testImplementation(libs.kotest.assertions.core)
     testImplementation(libs.mockk)

@@ -3,19 +3,12 @@ import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
-import data.statefulagent.memory.JsonTaskArtifactRepository
-import data.statefulagent.memory.JsonTaskContextRepository
-import data.statefulagent.memory.JsonTaskStateRepository
-import data.statefulagent.memory.MarkdownInvariantRepository
-import data.statefulagent.memory.MarkdownLongTermMemoryRepository
-import data.statefulagent.memory.MarkdownUserProfileRepository
-import domain.mcp.McpServerConfig
-import domain.mcp.McpToolsListRunner
+import data.statefulagent.memory.*
+import domain.mcp.RemoteGithubCommitsMcpRunner
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
-import domain.statefulagent.memory.TaskStateRepository
 import domain.statefulagent.stage.ExecutionStageAgent
 import domain.statefulagent.stage.PlanningStageAgent
 import domain.statefulagent.stage.ValidationStageAgent
@@ -30,28 +23,40 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    if (args.firstOrNull() == "mcp-tools") {
-        val config = McpServerConfig.everythingWindows()
+    if (args.firstOrNull() == "mcp-github-commits") {
+        val mcpUrl = args.getOrNull(1)
+        val owner = args.getOrNull(2)
+        val repo = args.getOrNull(3)
+        val limit = args.getOrNull(4)?.toIntOrNull() ?: 3
 
-        println("MCP server: ${config.name}")
-        println("Command: ${config.command} ${config.args.joinToString(" ")}")
+        if (mcpUrl == null || owner == null || repo == null) {
+            println("Usage:")
+            println("""  .\gradlew.bat run --args="mcp-github-commits <mcp-url> <owner> <repo> [limit]"""")
+            println()
+            println("Example:")
+            println("""  .\gradlew.bat run --args="mcp-github-commits https://your-service.onrender.com/mcp JetBrains kotlin 3"""")
+            return@runBlocking
+        }
+
+        println("Remote MCP server: $mcpUrl")
+        println("Tool: get_recent_commits")
+        println("Repository: $owner/$repo")
+        println("Limit: $limit")
         println()
 
-        val tools = McpToolsListRunner().loadTools(config)
+        val result = RemoteGithubCommitsMcpRunner().callRecentCommits(
+            mcpUrl = mcpUrl,
+            owner = owner,
+            repo = repo,
+            limit = limit,
+        )
 
         println("Connection: established")
+        println("Available tools: ${result.availableTools.joinToString()}")
         println()
-        println("Available tools:")
-
-        if (tools.isEmpty()) {
-            println("No tools returned")
-        } else {
-            tools.forEachIndexed { index, tool ->
-                println("${index + 1}. ${tool.name}")
-                println("   ${tool.description}")
-                println()
-            }
-        }
+        println("Agent result:")
+        println()
+        println(result.resultText)
 
         return@runBlocking
     }
