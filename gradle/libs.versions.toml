@@ -9,6 +9,7 @@ kotest = "6.0.2"
 mockk = "1.14.6"
 mcp-kotlin = "0.10.0"
 ktor = "3.2.3"
+slf4j = "2.0.16"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -21,6 +22,7 @@ retrofit-kotlinx-serialization-converter = { module = "com.jakewharton.retrofit:
 
 ktor-bom = { module = "io.ktor:ktor-bom", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio" }
+slf4j-nop = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 
 kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }
 kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }

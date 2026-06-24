@@ -24,6 +24,8 @@ dependencies {
     implementation(platform(libs.ktor.bom))
     implementation(libs.ktor.client.cio)
 
+    runtimeOnly(libs.slf4j.nop)
+
     testImplementation(libs.kotest.runner.junit5)
     testImplementation(libs.kotest.assertions.core)
     testImplementation(libs.mockk)

@@ -5,6 +5,7 @@ import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.*
 import domain.mcp.RemoteGithubCommitsMcpRunner
+import domain.mcp.RemotePriceWatchMcpRunner
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.statefulagent.StatefulAgentService
@@ -57,6 +58,58 @@ fun main(args: Array<String>) = runBlocking {
         println("Agent result:")
         println()
         println(result.resultText)
+
+        return@runBlocking
+    }
+
+    if (args.firstOrNull() == "mcp-price-watch") {
+        val mcpUrl = args.getOrNull(1)
+        val symbol = args.getOrNull(2) ?: "BTCUSDT"
+        val intervalSeconds = args.getOrNull(3)?.toIntOrNull() ?: 10
+        val waitSeconds = args.getOrNull(4)?.toIntOrNull() ?: 35
+        val stopAfterSummary = args.getOrNull(5)?.toBooleanStrictOrNull() ?: true
+
+        if (mcpUrl == null) {
+            println("Usage:")
+            println("""  .\gradlew.bat run --args="mcp-price-watch <mcp-url> [symbol] [intervalSeconds] [waitSeconds] [stopAfterSummary]"""")
+            println()
+            println("Example:")
+            println("""  .\gradlew.bat run --args="mcp-price-watch https://your-service.onrender.com/mcp BTCUSDT 10 35 true"""")
+            return@runBlocking
+        }
+
+        println("Remote MCP server: $mcpUrl")
+        println("Tool flow: start_price_watch -> wait -> get_price_watch_summary")
+        println("Symbol: $symbol")
+        println("Interval: $intervalSeconds seconds")
+        println("Wait before summary: $waitSeconds seconds")
+        println()
+
+        val result = RemotePriceWatchMcpRunner().runPriceWatchDemo(
+            mcpUrl = mcpUrl,
+            symbol = symbol,
+            intervalSeconds = intervalSeconds,
+            waitSeconds = waitSeconds,
+            stopAfterSummary = stopAfterSummary,
+            onProgress = { elapsedSeconds, totalSeconds ->
+                println("Waiting for price snapshots... $elapsedSeconds/$totalSeconds seconds")
+            },
+        )
+
+        println("Connection: established")
+        println("Available tools: ${result.availableTools.joinToString()}")
+        println()
+        println("Start result:")
+        println(result.startText)
+        println()
+        println("Agent summary:")
+        println(result.summaryText)
+
+        result.stopText?.let { stopText ->
+            println()
+            println("Stop result:")
+            println(stopText)
+        }
 
         return@runBlocking
     }
