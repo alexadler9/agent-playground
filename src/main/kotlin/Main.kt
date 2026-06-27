@@ -5,6 +5,7 @@ import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.*
 import domain.mcp.RemoteGithubCommitsMcpRunner
+import domain.mcp.RemoteMcpToolAgent
 import domain.mcp.RemotePriceWatchMcpRunner
 import domain.model.AgentConfig
 import domain.model.ChatSession
@@ -110,6 +111,83 @@ fun main(args: Array<String>) = runBlocking {
             println("Stop result:")
             println(stopText)
         }
+
+        return@runBlocking
+    }
+
+    if (args.firstOrNull() == "mcp-agent-request") {
+        val mcpUrl = args.getOrNull(1)
+        val userRequest = args.drop(2).joinToString(" ")
+
+        if (mcpUrl == null || userRequest.isBlank()) {
+            println("Usage:")
+            println("""  .\gradlew.bat --console=plain -q run --args="mcp-agent-request <mcp-url> <user-request>"""")
+            println()
+            println("Example:")
+            println("""  .\gradlew.bat --console=plain -q run --args="mcp-agent-request https://your-service.onrender.com/mcp Find last 5 commits in JetBrains/kotlin, summarize them and save to file"""")
+            return@runBlocking
+        }
+
+        println("User request:")
+        println(userRequest)
+        println()
+
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .readTimeout(Duration.ofSeconds(120))
+            .writeTimeout(Duration.ofSeconds(60))
+            .callTimeout(Duration.ofSeconds(180))
+            .build()
+
+        val json = Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
+
+        val retrofit = Retrofit.Builder()
+            .baseUrl(AppConfig.BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(
+                json.asConverterFactory("application/json".toMediaType())
+            )
+            .build()
+
+        val api = retrofit.create(ChatCompletionApi::class.java)
+
+        val llmGateway = RetrofitLlmGateway(
+            api = api,
+            apiKey = AppConfig.apiKey,
+        )
+
+        val result = try {
+            RemoteMcpToolAgent(
+                llmGateway = llmGateway,
+                agentConfig = AgentConfig(
+                    model = AppConfig.MODEL,
+                    maxTokens = 1_000,
+                    temperature = 0.0,
+                ),
+                json = json,
+            ).handleUserRequest(
+                mcpUrl = mcpUrl,
+                userRequest = userRequest,
+                onStep = { step -> println(step) },
+            )
+        } finally {
+            okHttpClient.dispatcher.executorService.shutdown()
+            okHttpClient.connectionPool.evictAll()
+        }
+
+        if (result.toolHistory.isNotEmpty()) {
+            println("Executed MCP tool calls:")
+            result.toolHistory.forEachIndexed { index, item ->
+                println("${index + 1}. ${item.toolName} -> ${item.saveAs}")
+            }
+            println()
+        }
+
+        println("Agent answer:")
+        println(result.finalAnswer)
 
         return@runBlocking
     }
