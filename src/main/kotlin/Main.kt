@@ -4,9 +4,7 @@ import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.*
-import domain.mcp.RemoteGithubCommitsMcpRunner
-import domain.mcp.RemoteMcpToolAgent
-import domain.mcp.RemotePriceWatchMcpRunner
+import domain.mcp.RemoteMultiMcpToolAgent
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.statefulagent.StatefulAgentService
@@ -25,111 +23,22 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    if (args.firstOrNull() == "mcp-github-commits") {
-        val mcpUrl = args.getOrNull(1)
-        val owner = args.getOrNull(2)
-        val repo = args.getOrNull(3)
-        val limit = args.getOrNull(4)?.toIntOrNull() ?: 3
+    if (args.firstOrNull() == "multi-mcp-agent-request") {
+        val githubMcpUrl = args.getOrNull(1)
+        val workspaceDirectory = args.getOrNull(2)
+        val userRequest = args.drop(3).joinToString(" ")
 
-        if (mcpUrl == null || owner == null || repo == null) {
+        if (githubMcpUrl == null || workspaceDirectory == null || userRequest.isBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat run --args="mcp-github-commits <mcp-url> <owner> <repo> [limit]"""")
-            println()
-            println("Example:")
-            println("""  .\gradlew.bat run --args="mcp-github-commits https://your-service.onrender.com/mcp JetBrains kotlin 3"""")
-            return@runBlocking
-        }
-
-        println("Remote MCP server: $mcpUrl")
-        println("Tool: get_recent_commits")
-        println("Repository: $owner/$repo")
-        println("Limit: $limit")
-        println()
-
-        val result = RemoteGithubCommitsMcpRunner().callRecentCommits(
-            mcpUrl = mcpUrl,
-            owner = owner,
-            repo = repo,
-            limit = limit,
-        )
-
-        println("Connection: established")
-        println("Available tools: ${result.availableTools.joinToString()}")
-        println()
-        println("Agent result:")
-        println()
-        println(result.resultText)
-
-        return@runBlocking
-    }
-
-    if (args.firstOrNull() == "mcp-price-watch") {
-        val mcpUrl = args.getOrNull(1)
-        val symbol = args.getOrNull(2) ?: "BTCUSDT"
-        val intervalSeconds = args.getOrNull(3)?.toIntOrNull() ?: 10
-        val waitSeconds = args.getOrNull(4)?.toIntOrNull() ?: 35
-        val stopAfterSummary = args.getOrNull(5)?.toBooleanStrictOrNull() ?: true
-
-        if (mcpUrl == null) {
-            println("Usage:")
-            println("""  .\gradlew.bat run --args="mcp-price-watch <mcp-url> [symbol] [intervalSeconds] [waitSeconds] [stopAfterSummary]"""")
-            println()
-            println("Example:")
-            println("""  .\gradlew.bat run --args="mcp-price-watch https://your-service.onrender.com/mcp BTCUSDT 10 35 true"""")
-            return@runBlocking
-        }
-
-        println("Remote MCP server: $mcpUrl")
-        println("Tool flow: start_price_watch -> wait -> get_price_watch_summary")
-        println("Symbol: $symbol")
-        println("Interval: $intervalSeconds seconds")
-        println("Wait before summary: $waitSeconds seconds")
-        println()
-
-        val result = RemotePriceWatchMcpRunner().runPriceWatchDemo(
-            mcpUrl = mcpUrl,
-            symbol = symbol,
-            intervalSeconds = intervalSeconds,
-            waitSeconds = waitSeconds,
-            stopAfterSummary = stopAfterSummary,
-            onProgress = { elapsedSeconds, totalSeconds ->
-                println("Waiting for price snapshots... $elapsedSeconds/$totalSeconds seconds")
-            },
-        )
-
-        println("Connection: established")
-        println("Available tools: ${result.availableTools.joinToString()}")
-        println()
-        println("Start result:")
-        println(result.startText)
-        println()
-        println("Agent summary:")
-        println(result.summaryText)
-
-        result.stopText?.let { stopText ->
-            println()
-            println("Stop result:")
-            println(stopText)
-        }
-
-        return@runBlocking
-    }
-
-    if (args.firstOrNull() == "mcp-agent-request") {
-        val mcpUrl = args.getOrNull(1)
-        val userRequest = args.drop(2).joinToString(" ")
-
-        if (mcpUrl == null || userRequest.isBlank()) {
-            println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="mcp-agent-request <mcp-url> <user-request>"""")
-            println()
-            println("Example:")
-            println("""  .\gradlew.bat --console=plain -q run --args="mcp-agent-request https://your-service.onrender.com/mcp Find last 5 commits in JetBrains/kotlin, summarize them and save to file"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="multi-mcp-agent-request <github-mcp-url> <workspace-dir> <user-request>"""")
             return@runBlocking
         }
 
         println("User request:")
         println(userRequest)
+        println()
+        println("GitHub MCP server: $githubMcpUrl")
+        println("Workspace directory: $workspaceDirectory")
         println()
 
         val okHttpClient = OkHttpClient.Builder()
@@ -160,16 +69,17 @@ fun main(args: Array<String>) = runBlocking {
         )
 
         val result = try {
-            RemoteMcpToolAgent(
+            RemoteMultiMcpToolAgent(
                 llmGateway = llmGateway,
                 agentConfig = AgentConfig(
                     model = AppConfig.MODEL,
-                    maxTokens = 1_000,
+                    maxTokens = 1_500,
                     temperature = 0.0,
                 ),
                 json = json,
             ).handleUserRequest(
-                mcpUrl = mcpUrl,
+                githubMcpUrl = githubMcpUrl,
+                workspaceDirectory = workspaceDirectory,
                 userRequest = userRequest,
                 onStep = { step -> println(step) },
             )
@@ -178,15 +88,13 @@ fun main(args: Array<String>) = runBlocking {
             okHttpClient.connectionPool.evictAll()
         }
 
-        if (result.toolHistory.isNotEmpty()) {
-            println("Executed MCP tool calls:")
-            result.toolHistory.forEachIndexed { index, item ->
-                println("${index + 1}. ${item.toolName} -> ${item.saveAs}")
-            }
-            println()
+        println()
+        println("Executed MCP tool calls:")
+        result.toolHistory.forEachIndexed { index, item ->
+            println("${index + 1}. ${item.serverName}.${item.toolName} -> ${item.saveAs}")
         }
-
-        println("Agent answer:")
+        println()
+        println("Final answer:")
         println(result.finalAnswer)
 
         return@runBlocking
