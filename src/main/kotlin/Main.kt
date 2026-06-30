@@ -11,6 +11,7 @@ import domain.rag.ChunkingComparisonReporter
 import domain.rag.DeterministicEmbeddingGateway
 import domain.rag.DocumentLoader
 import domain.rag.FixedSizeChunker
+import domain.rag.OllamaEmbeddingGateway
 import domain.rag.RagIndexBuilder
 import domain.rag.RagIndexWriter
 import domain.rag.StructureAwareChunker
@@ -37,17 +38,29 @@ fun main(args: Array<String>) = runBlocking {
 
         if (documentsRoot.isNullOrBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="build-rag-index <documents-root> [output-root]"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="build-rag-index <documents-root> [output-root] [deterministic|ollama] [embedding-model]"""")
             return@runBlocking
         }
 
         val json = Json {
             prettyPrint = true
             explicitNulls = false
+            ignoreUnknownKeys = true
         }
 
         val documents = DocumentLoader().load(Path.of(documentsRoot))
-        val embeddingGateway = DeterministicEmbeddingGateway()
+
+        val embeddingProvider = args.getOrNull(3) ?: "deterministic"
+        val embeddingModel = args.getOrNull(4) ?: "nomic-embed-text"
+
+        val embeddingGateway = when (embeddingProvider) {
+            "deterministic" -> DeterministicEmbeddingGateway()
+            "ollama" -> OllamaEmbeddingGateway(
+                model = embeddingModel,
+                json = json,
+            )
+            else -> error("Unsupported embedding provider: $embeddingProvider")
+        }
 
         val strategies = listOf(
             FixedSizeChunker(),
