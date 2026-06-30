@@ -8,6 +8,7 @@ import domain.mcp.RemoteMultiMcpToolAgent
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.rag.DocumentLoader
+import domain.rag.FixedSizeChunker
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
 import domain.statefulagent.stage.ExecutionStageAgent
@@ -24,26 +25,54 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    if (args.firstOrNull() == "rag-load-documents") {
+    if (args.firstOrNull() == "rag-preview-chunks") {
         val documentsRoot = args.getOrNull(1)
+        val strategyName = args.getOrNull(2) ?: "fixed"
 
         if (documentsRoot.isNullOrBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="rag-load-documents <documents-root>"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-preview-chunks <documents-root> [fixed]"""")
             return@runBlocking
         }
 
+        val strategy = when (strategyName) {
+            "fixed", "fixed-size" -> FixedSizeChunker()
+            else -> error("Unsupported chunking strategy: $strategyName")
+        }
+
         val documents = DocumentLoader().load(Path.of(documentsRoot))
+        val chunks = documents.flatMap { document -> strategy.chunk(document) }
+        val sizes = chunks.map { chunk -> chunk.text.length }
 
-        println("Loaded documents: ${documents.size}")
+        println("Documents: ${documents.size}")
+        println("Strategy: ${strategy.name}")
+        println("Chunks: ${chunks.size}")
+
+        if (sizes.isNotEmpty()) {
+            println("Average chunk size: ${sizes.average().toInt()} chars")
+            println("Min chunk size: ${sizes.minOrNull()} chars")
+            println("Max chunk size: ${sizes.maxOrNull()} chars")
+        }
+
         println()
+        println("Chunks by source:")
+        chunks
+            .groupBy { chunk -> chunk.source }
+            .toSortedMap()
+            .forEach { (source, sourceChunks) ->
+                println("- $source: ${sourceChunks.size}")
+            }
 
-        documents.forEachIndexed { index, document ->
-            println("${index + 1}. ${document.source}")
-            println("   title: ${document.title}")
-            println("   type: ${document.type}")
-            println("   chars: ${document.text.length}")
+        println()
+        println("Examples:")
+        chunks.take(5).forEachIndexed { index, chunk ->
             println()
+            println("${index + 1}. ${chunk.chunkId}")
+            println("   source: ${chunk.source}")
+            println("   title: ${chunk.title}")
+            println("   section: ${chunk.section}")
+            println("   chars: ${chunk.text.length}")
+            println("   preview: ${chunk.text.take(180).replace("\n", " ")}")
         }
 
         return@runBlocking
