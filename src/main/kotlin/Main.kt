@@ -16,6 +16,7 @@ import domain.rag.RagIndexBuilder
 import domain.rag.RagIndexReader
 import domain.rag.RagIndexSearcher
 import domain.rag.RagIndexWriter
+import domain.rag.RagSearchReportWriter
 import domain.rag.StructureAwareChunker
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
@@ -77,25 +78,20 @@ fun main(args: Array<String>) = runBlocking {
             topK = 5,
         )
 
+        val outputPath = Path.of("rag-index").resolve("search-results.md")
+
+        RagSearchReportWriter().write(
+            query = query,
+            index = index,
+            results = results,
+            outputPath = outputPath,
+        )
+
         println("RAG search completed.")
         println("Index: $indexPath")
         println("Strategy: ${index.strategy}")
         println("Embedding model: ${index.embeddingModel}")
-        println("Query: $query")
-        println()
-
-        results.forEachIndexed { resultIndex, result ->
-            val chunk = result.chunk
-
-            println("${resultIndex + 1}. score=${"%.4f".format(result.score)}")
-            println("   chunk_id: ${chunk.chunkId}")
-            println("   source: ${chunk.source}")
-            println("   title: ${chunk.title}")
-            println("   section: ${chunk.section}")
-            println("   chars: ${chunk.text.length}")
-            println("   preview: ${chunk.text.take(400).replace("\n", " ")}")
-            println()
-        }
+        println("Results saved to: $outputPath")
 
         return@runBlocking
     }

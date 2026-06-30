@@ -2,6 +2,12 @@ package domain.rag
 
 import kotlin.math.sqrt
 
+/**
+ * Выполняет локальный retrieval по уже построенному индексу.
+ *
+ * Важно: query embedding должен быть построен той же моделью,
+ * что и embeddings внутри индекса, иначе cosine similarity будет некорректной.
+ */
 class RagIndexSearcher(
     private val embeddingGateway: EmbeddingGateway,
 ) {
@@ -30,6 +36,10 @@ class RagIndexSearcher(
             .take(topK)
     }
 
+    /**
+     * Сравниваем смысловую близость query и chunk через cosine similarity.
+     * Чем ближе score к 1.0, тем более похожими считаются векторы.
+     */
     private fun cosineSimilarity(
         first: List<Float>,
         second: List<Float>,

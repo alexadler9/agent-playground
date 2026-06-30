@@ -4,6 +4,11 @@ import kotlinx.serialization.json.Json
 import java.nio.file.Path
 import kotlin.io.path.readText
 
+/**
+ * Читает сохранённый JSON-index обратно в доменную модель.
+ *
+ * Это отдельный класс, чтобы search-режим не зависел от деталей хранения файла.
+ */
 class RagIndexReader(
     private val json: Json,
 ) {
