@@ -7,6 +7,7 @@ import data.statefulagent.memory.*
 import domain.mcp.RemoteMultiMcpToolAgent
 import domain.model.AgentConfig
 import domain.model.ChatSession
+import domain.rag.DocumentLoader
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
 import domain.statefulagent.stage.ExecutionStageAgent
@@ -23,79 +24,27 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    if (args.firstOrNull() == "multi-mcp-agent-request") {
-        val githubMcpUrl = args.getOrNull(1)
-        val workspaceDirectory = args.getOrNull(2)
-        val userRequest = args.drop(3).joinToString(" ")
+    if (args.firstOrNull() == "rag-load-documents") {
+        val documentsRoot = args.getOrNull(1)
 
-        if (githubMcpUrl == null || workspaceDirectory == null || userRequest.isBlank()) {
+        if (documentsRoot.isNullOrBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="multi-mcp-agent-request <github-mcp-url> <workspace-dir> <user-request>"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-load-documents <documents-root>"""")
             return@runBlocking
         }
 
-        println("User request:")
-        println(userRequest)
-        println()
-        println("GitHub MCP server: $githubMcpUrl")
-        println("Workspace directory: $workspaceDirectory")
+        val documents = DocumentLoader().load(Path.of(documentsRoot))
+
+        println("Loaded documents: ${documents.size}")
         println()
 
-        val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .readTimeout(Duration.ofSeconds(120))
-            .writeTimeout(Duration.ofSeconds(60))
-            .callTimeout(Duration.ofSeconds(180))
-            .build()
-
-        val json = Json {
-            ignoreUnknownKeys = true
-            explicitNulls = false
+        documents.forEachIndexed { index, document ->
+            println("${index + 1}. ${document.source}")
+            println("   title: ${document.title}")
+            println("   type: ${document.type}")
+            println("   chars: ${document.text.length}")
+            println()
         }
-
-        val retrofit = Retrofit.Builder()
-            .baseUrl(AppConfig.BASE_URL)
-            .client(okHttpClient)
-            .addConverterFactory(
-                json.asConverterFactory("application/json".toMediaType())
-            )
-            .build()
-
-        val api = retrofit.create(ChatCompletionApi::class.java)
-
-        val llmGateway = RetrofitLlmGateway(
-            api = api,
-            apiKey = AppConfig.apiKey,
-        )
-
-        val result = try {
-            RemoteMultiMcpToolAgent(
-                llmGateway = llmGateway,
-                agentConfig = AgentConfig(
-                    model = AppConfig.MODEL,
-                    maxTokens = 1_500,
-                    temperature = 0.0,
-                ),
-                json = json,
-            ).handleUserRequest(
-                githubMcpUrl = githubMcpUrl,
-                workspaceDirectory = workspaceDirectory,
-                userRequest = userRequest,
-                onStep = { step -> println(step) },
-            )
-        } finally {
-            okHttpClient.dispatcher.executorService.shutdown()
-            okHttpClient.connectionPool.evictAll()
-        }
-
-        println()
-        println("Executed MCP tool calls:")
-        result.toolHistory.forEachIndexed { index, item ->
-            println("${index + 1}. ${item.serverName}.${item.toolName} -> ${item.saveAs}")
-        }
-        println()
-        println("Final answer:")
-        println(result.finalAnswer)
 
         return@runBlocking
     }
