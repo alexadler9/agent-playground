@@ -7,6 +7,7 @@ import data.statefulagent.memory.*
 import domain.mcp.RemoteMultiMcpToolAgent
 import domain.model.AgentConfig
 import domain.model.ChatSession
+import domain.rag.ChunkingComparisonReporter
 import domain.rag.DocumentLoader
 import domain.rag.FixedSizeChunker
 import domain.rag.StructureAwareChunker
@@ -22,60 +23,40 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import presentation.statefulagent.StatefulAgentCli
 import retrofit2.Retrofit
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    if (args.firstOrNull() == "rag-preview-chunks") {
+    if (args.firstOrNull() == "rag-compare-chunking") {
         val documentsRoot = args.getOrNull(1)
-        val strategyName = args.getOrNull(2) ?: "fixed"
+        val outputRoot = args.getOrNull(2) ?: "rag-index"
 
         if (documentsRoot.isNullOrBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="rag-preview-chunks <documents-root> [fixed|structure]"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-compare-chunking <documents-root> [output-root]"""")
             return@runBlocking
         }
 
-        val strategy = when (strategyName) {
-            "fixed", "fixed-size" -> FixedSizeChunker()
-            "structure", "structure-aware" -> StructureAwareChunker()
-            else -> error("Unsupported chunking strategy: $strategyName")
-        }
-
         val documents = DocumentLoader().load(Path.of(documentsRoot))
-        val chunks = documents.flatMap { document -> strategy.chunk(document) }
-        val sizes = chunks.map { chunk -> chunk.text.length }
 
-        println("Documents: ${documents.size}")
-        println("Strategy: ${strategy.name}")
-        println("Chunks: ${chunks.size}")
+        val strategies = listOf(
+            FixedSizeChunker(),
+            StructureAwareChunker(),
+        )
 
-        if (sizes.isNotEmpty()) {
-            println("Average chunk size: ${sizes.average().toInt()} chars")
-            println("Min chunk size: ${sizes.minOrNull()} chars")
-            println("Max chunk size: ${sizes.maxOrNull()} chars")
-        }
+        val report = ChunkingComparisonReporter().buildReport(
+            documents = documents,
+            strategies = strategies,
+        )
 
-        println()
-        println("Chunks by source:")
-        chunks
-            .groupBy { chunk -> chunk.source }
-            .toSortedMap()
-            .forEach { (source, sourceChunks) ->
-                println("- $source: ${sourceChunks.size}")
-            }
+        val outputDirectory = Path.of(outputRoot)
+        Files.createDirectories(outputDirectory)
 
-        println()
-        println("Examples:")
-        chunks.take(5).forEachIndexed { index, chunk ->
-            println()
-            println("${index + 1}. ${chunk.chunkId}")
-            println("   source: ${chunk.source}")
-            println("   title: ${chunk.title}")
-            println("   section: ${chunk.section}")
-            println("   chars: ${chunk.text.length}")
-            println("   preview: ${chunk.text.take(180).replace("\n", " ")}")
-        }
+        val reportPath = outputDirectory.resolve("chunking-comparison.md")
+        Files.writeString(reportPath, report)
+
+        println("Comparison report saved to: $reportPath")
 
         return@runBlocking
     }
