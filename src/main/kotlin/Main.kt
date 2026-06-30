@@ -4,20 +4,9 @@ import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.*
-import domain.mcp.RemoteMultiMcpToolAgent
 import domain.model.AgentConfig
 import domain.model.ChatSession
-import domain.rag.ChunkingComparisonReporter
-import domain.rag.DeterministicEmbeddingGateway
-import domain.rag.DocumentLoader
-import domain.rag.FixedSizeChunker
-import domain.rag.OllamaEmbeddingGateway
-import domain.rag.RagIndexBuilder
-import domain.rag.RagIndexReader
-import domain.rag.RagIndexSearcher
-import domain.rag.RagIndexWriter
-import domain.rag.RagSearchReportWriter
-import domain.rag.StructureAwareChunker
+import domain.rag.*
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
 import domain.statefulagent.stage.ExecutionStageAgent
@@ -35,15 +24,108 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    if (args.firstOrNull() == "rag-search") {
+    if (args.firstOrNull() == "rag-evaluate") {
         val indexPath = args.getOrNull(1)
         val embeddingProvider = args.getOrNull(2) ?: "ollama"
-        val embeddingModel = args.getOrNull(3) ?: "nomic-embed-text"
-        val query = args.drop(4).joinToString(" ")
+        val embeddingModel = args.getOrNull(3) ?: "bge-m3"
 
-        if (indexPath.isNullOrBlank() || query.isBlank()) {
+        if (indexPath.isNullOrBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="rag-search <index-path> [deterministic|ollama] [embedding-model] <query>"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-evaluate <index-path> [deterministic|ollama] [embedding-model]"""")
+            return@runBlocking
+        }
+
+        val json = Json {
+            prettyPrint = true
+            explicitNulls = false
+            ignoreUnknownKeys = true
+        }
+
+        val embeddingGateway = when (embeddingProvider) {
+            "deterministic" -> DeterministicEmbeddingGateway()
+            "ollama" -> OllamaEmbeddingGateway(
+                model = embeddingModel,
+                json = json,
+            )
+            else -> error("Unsupported embedding provider: $embeddingProvider")
+        }
+
+        val ragIndex = RagIndexReader(json).read(Path.of(indexPath))
+
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .readTimeout(Duration.ofSeconds(120))
+            .writeTimeout(Duration.ofSeconds(60))
+            .callTimeout(Duration.ofSeconds(180))
+            .build()
+
+        val retrofit = Retrofit.Builder()
+            .baseUrl(AppConfig.BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(
+                json.asConverterFactory("application/json".toMediaType()),
+            )
+            .build()
+
+        val api = retrofit.create(ChatCompletionApi::class.java)
+
+        val llmGateway = RetrofitLlmGateway(
+            api = api,
+            apiKey = AppConfig.apiKey,
+        )
+
+        val agent = RagAnswerAgent(
+            llmGateway = llmGateway,
+            agentConfig = AgentConfig(
+                model = AppConfig.MODEL,
+                maxTokens = 1_500,
+                temperature = 0.0,
+            ),
+            embeddingGateway = embeddingGateway,
+        )
+
+        val items = try {
+            RagEvaluationQuestions.cases.mapIndexed { questionIndex, case ->
+                println("Evaluating question ${questionIndex + 1}/${RagEvaluationQuestions.cases.size}: ${case.id}")
+
+                RagEvaluationItem(
+                    case = case,
+                    comparison = agent.compare(
+                        index = ragIndex,
+                        question = case.question,
+                    ),
+                )
+            }
+        } finally {
+            okHttpClient.dispatcher.executorService.shutdown()
+            okHttpClient.connectionPool.evictAll()
+        }
+
+        val outputPath = Path.of("rag-index").resolve("rag-quality-comparison.md")
+
+        RagEvaluationReportWriter().write(
+            items = items,
+            outputPath = outputPath,
+        )
+
+        println("RAG evaluation completed.")
+        println("Questions: ${items.size}")
+        println("Index: $indexPath")
+        println("Embedding model: ${embeddingGateway.modelName}")
+        println("Report saved to: $outputPath")
+
+        return@runBlocking
+    }
+
+    if (args.firstOrNull() == "rag-compare-answer") {
+        val indexPath = args.getOrNull(1)
+        val embeddingProvider = args.getOrNull(2) ?: "ollama"
+        val embeddingModel = args.getOrNull(3) ?: "bge-m3"
+        val question = args.drop(4).joinToString(" ")
+
+        if (indexPath.isNullOrBlank() || question.isBlank()) {
+            println("Usage:")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-compare-answer <index-path> [deterministic|ollama] [embedding-model] <question>"""")
             return@runBlocking
         }
 
@@ -64,34 +146,57 @@ fun main(args: Array<String>) = runBlocking {
 
         val index = RagIndexReader(json).read(Path.of(indexPath))
 
-        if (index.embeddingModel != embeddingGateway.modelName) {
-            println("Warning: index embedding model is ${index.embeddingModel}, query embedding model is ${embeddingGateway.modelName}")
-            println("Search quality may be incorrect if embedding models are different.")
-            println()
-        }
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .readTimeout(Duration.ofSeconds(120))
+            .writeTimeout(Duration.ofSeconds(60))
+            .callTimeout(Duration.ofSeconds(180))
+            .build()
 
-        val results = RagIndexSearcher(
-            embeddingGateway = embeddingGateway,
-        ).search(
-            index = index,
-            query = query,
-            topK = 5,
+        val retrofit = Retrofit.Builder()
+            .baseUrl(AppConfig.BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(
+                json.asConverterFactory("application/json".toMediaType()),
+            )
+            .build()
+
+        val api = retrofit.create(ChatCompletionApi::class.java)
+
+        val llmGateway = RetrofitLlmGateway(
+            api = api,
+            apiKey = AppConfig.apiKey,
         )
 
-        val outputPath = Path.of("rag-index").resolve("search-results.md")
+        val result = try {
+            RagAnswerAgent(
+                llmGateway = llmGateway,
+                agentConfig = AgentConfig(
+                    model = AppConfig.MODEL,
+                    maxTokens = 1_500,
+                    temperature = 0.0,
+                ),
+                embeddingGateway = embeddingGateway,
+            ).compare(
+                index = index,
+                question = question,
+            )
+        } finally {
+            okHttpClient.dispatcher.executorService.shutdown()
+            okHttpClient.connectionPool.evictAll()
+        }
 
-        RagSearchReportWriter().write(
-            query = query,
-            index = index,
-            results = results,
+        val outputPath = Path.of("rag-index").resolve("rag-answer-comparison.md")
+
+        RagAnswerReportWriter().writeComparison(
+            result = result,
             outputPath = outputPath,
         )
 
-        println("RAG search completed.")
+        println("RAG answer comparison completed.")
         println("Index: $indexPath")
-        println("Strategy: ${index.strategy}")
-        println("Embedding model: ${index.embeddingModel}")
-        println("Results saved to: $outputPath")
+        println("Embedding model: ${embeddingGateway.modelName}")
+        println("Report saved to: $outputPath")
 
         return@runBlocking
     }
