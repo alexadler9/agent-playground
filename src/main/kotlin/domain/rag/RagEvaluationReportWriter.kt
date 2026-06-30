@@ -40,7 +40,7 @@ class RagEvaluationReportWriter {
             appendLine("- ожидаемые источники;")
             appendLine("- ответ без RAG;")
             appendLine("- ответ с RAG;")
-            appendLine("- chunks, найденные retrieval-слоем.")
+            appendLine("- источники и chunk_id, найденные retrieval-слоем.")
             appendLine()
 
             appendLine("## Сводка")
@@ -101,26 +101,23 @@ class RagEvaluationReportWriter {
             answer = item.comparison.ragAnswer,
         )
 
-        appendLine("### Найденные chunks")
+        appendLine("### Найденные источники")
         appendLine()
 
         if (item.comparison.ragAnswer.selectedChunks.isEmpty()) {
             appendLine("Retrieval не нашёл chunks выше заданного порога релевантности")
             appendLine()
         } else {
+            appendLine("| # | Score | Source | Section | Chunk ID |")
+            appendLine("|---:|---:|---|---|---|")
+
             item.comparison.ragAnswer.selectedChunks.forEachIndexed { chunkIndex, chunk ->
-                appendLine("#### ${chunkIndex + 1}. `${chunk.chunkId}`")
-                appendLine()
-                appendLine("- score: `${"%.4f".format(chunk.score)}`")
-                appendLine("- source: `${chunk.source}`")
-                appendLine("- title: `${chunk.title}`")
-                appendLine("- section: `${chunk.section}`")
-                appendLine()
-                appendLine("```text")
-                appendLine(chunk.text.take(1_500))
-                appendLine("```")
-                appendLine()
+                appendLine(
+                    "| ${chunkIndex + 1} | ${"%.4f".format(chunk.score)} | `${chunk.source}` | `${chunk.section}` | `${chunk.chunkId}` |",
+                )
             }
+
+            appendLine()
         }
     }
 
