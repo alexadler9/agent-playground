@@ -8,8 +8,11 @@ import domain.mcp.RemoteMultiMcpToolAgent
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.rag.ChunkingComparisonReporter
+import domain.rag.DeterministicEmbeddingGateway
 import domain.rag.DocumentLoader
 import domain.rag.FixedSizeChunker
+import domain.rag.RagIndexBuilder
+import domain.rag.RagIndexWriter
 import domain.rag.StructureAwareChunker
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
@@ -28,6 +31,61 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
+    if (args.firstOrNull() == "build-rag-index") {
+        val documentsRoot = args.getOrNull(1)
+        val outputRoot = args.getOrNull(2) ?: "rag-index"
+
+        if (documentsRoot.isNullOrBlank()) {
+            println("Usage:")
+            println("""  .\gradlew.bat --console=plain -q run --args="build-rag-index <documents-root> [output-root]"""")
+            return@runBlocking
+        }
+
+        val json = Json {
+            prettyPrint = true
+            explicitNulls = false
+        }
+
+        val documents = DocumentLoader().load(Path.of(documentsRoot))
+        val embeddingGateway = DeterministicEmbeddingGateway()
+
+        val strategies = listOf(
+            FixedSizeChunker(),
+            StructureAwareChunker(),
+        )
+
+        val outputDirectory = Path.of(outputRoot)
+        Files.createDirectories(outputDirectory)
+
+        strategies.forEach { strategy ->
+            println("Building RAG index for strategy: ${strategy.name}")
+
+            val index = RagIndexBuilder(
+                embeddingGateway = embeddingGateway,
+            ).build(
+                documents = documents,
+                chunkingStrategy = strategy,
+            )
+
+            val outputPath = outputDirectory.resolve("${strategy.name}-index.json")
+
+            RagIndexWriter(json).write(
+                index = index,
+                outputPath = outputPath,
+            )
+
+            println("Index saved to: $outputPath")
+            println("Chunks: ${index.chunksCount}")
+            println()
+        }
+
+        println("RAG index build completed.")
+        println("Embedding model: ${embeddingGateway.modelName}")
+        println("Output directory: $outputDirectory")
+
+        return@runBlocking
+    }
+
     if (args.firstOrNull() == "rag-compare-chunking") {
         val documentsRoot = args.getOrNull(1)
         val outputRoot = args.getOrNull(2) ?: "rag-index"
