@@ -13,6 +13,8 @@ import domain.rag.DocumentLoader
 import domain.rag.FixedSizeChunker
 import domain.rag.OllamaEmbeddingGateway
 import domain.rag.RagIndexBuilder
+import domain.rag.RagIndexReader
+import domain.rag.RagIndexSearcher
 import domain.rag.RagIndexWriter
 import domain.rag.StructureAwareChunker
 import domain.statefulagent.StatefulAgentService
@@ -32,6 +34,72 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
+    if (args.firstOrNull() == "rag-search") {
+        val indexPath = args.getOrNull(1)
+        val embeddingProvider = args.getOrNull(2) ?: "ollama"
+        val embeddingModel = args.getOrNull(3) ?: "nomic-embed-text"
+        val query = args.drop(4).joinToString(" ")
+
+        if (indexPath.isNullOrBlank() || query.isBlank()) {
+            println("Usage:")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-search <index-path> [deterministic|ollama] [embedding-model] <query>"""")
+            return@runBlocking
+        }
+
+        val json = Json {
+            prettyPrint = true
+            explicitNulls = false
+            ignoreUnknownKeys = true
+        }
+
+        val embeddingGateway = when (embeddingProvider) {
+            "deterministic" -> DeterministicEmbeddingGateway()
+            "ollama" -> OllamaEmbeddingGateway(
+                model = embeddingModel,
+                json = json,
+            )
+            else -> error("Unsupported embedding provider: $embeddingProvider")
+        }
+
+        val index = RagIndexReader(json).read(Path.of(indexPath))
+
+        if (index.embeddingModel != embeddingGateway.modelName) {
+            println("Warning: index embedding model is ${index.embeddingModel}, query embedding model is ${embeddingGateway.modelName}")
+            println("Search quality may be incorrect if embedding models are different.")
+            println()
+        }
+
+        val results = RagIndexSearcher(
+            embeddingGateway = embeddingGateway,
+        ).search(
+            index = index,
+            query = query,
+            topK = 5,
+        )
+
+        println("RAG search completed.")
+        println("Index: $indexPath")
+        println("Strategy: ${index.strategy}")
+        println("Embedding model: ${index.embeddingModel}")
+        println("Query: $query")
+        println()
+
+        results.forEachIndexed { resultIndex, result ->
+            val chunk = result.chunk
+
+            println("${resultIndex + 1}. score=${"%.4f".format(result.score)}")
+            println("   chunk_id: ${chunk.chunkId}")
+            println("   source: ${chunk.source}")
+            println("   title: ${chunk.title}")
+            println("   section: ${chunk.section}")
+            println("   chars: ${chunk.text.length}")
+            println("   preview: ${chunk.text.take(400).replace("\n", " ")}")
+            println()
+        }
+
+        return@runBlocking
+    }
+
     if (args.firstOrNull() == "build-rag-index") {
         val documentsRoot = args.getOrNull(1)
         val outputRoot = args.getOrNull(2) ?: "rag-index"
