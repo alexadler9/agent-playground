@@ -1,4 +1,6 @@
 storage/
+rag-documents/
+rag-index/
 
 .gradle
 build/
