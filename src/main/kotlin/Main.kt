@@ -9,6 +9,7 @@ import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.rag.DocumentLoader
 import domain.rag.FixedSizeChunker
+import domain.rag.StructureAwareChunker
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
 import domain.statefulagent.stage.ExecutionStageAgent
@@ -31,12 +32,13 @@ fun main(args: Array<String>) = runBlocking {
 
         if (documentsRoot.isNullOrBlank()) {
             println("Usage:")
-            println("""  .\gradlew.bat --console=plain -q run --args="rag-preview-chunks <documents-root> [fixed]"""")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-preview-chunks <documents-root> [fixed|structure]"""")
             return@runBlocking
         }
 
         val strategy = when (strategyName) {
             "fixed", "fixed-size" -> FixedSizeChunker()
+            "structure", "structure-aware" -> StructureAwareChunker()
             else -> error("Unsupported chunking strategy: $strategyName")
         }
 
