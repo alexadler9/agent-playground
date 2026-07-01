@@ -24,6 +24,100 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
+    if (args.firstOrNull() == "rag-preview-reranking") {
+        val indexPath = args.getOrNull(1)
+        val embeddingProvider = args.getOrNull(2) ?: "ollama"
+        val embeddingModel = args.getOrNull(3) ?: "bge-m3"
+        val question = args.drop(4).joinToString(" ")
+
+        if (indexPath.isNullOrBlank() || question.isBlank()) {
+            println("Usage:")
+            println("""  .\gradlew.bat --console=plain -q run --args="rag-preview-reranking <index-path> [deterministic|ollama] [embedding-model] <question>"""")
+            return@runBlocking
+        }
+
+        val json = Json {
+            prettyPrint = true
+            explicitNulls = false
+            ignoreUnknownKeys = true
+        }
+
+        val embeddingGateway = when (embeddingProvider) {
+            "deterministic" -> DeterministicEmbeddingGateway()
+            "ollama" -> OllamaEmbeddingGateway(
+                model = embeddingModel,
+                json = json,
+            )
+            else -> error("Unsupported embedding provider: $embeddingProvider")
+        }
+
+        val ragIndex = RagIndexReader(json).read(Path.of(indexPath))
+
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .readTimeout(Duration.ofSeconds(120))
+            .writeTimeout(Duration.ofSeconds(60))
+            .callTimeout(Duration.ofSeconds(180))
+            .build()
+
+        val retrofit = Retrofit.Builder()
+            .baseUrl(AppConfig.BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(
+                json.asConverterFactory("application/json".toMediaType()),
+            )
+            .build()
+
+        val api = retrofit.create(ChatCompletionApi::class.java)
+
+        val llmGateway = RetrofitLlmGateway(
+            api = api,
+            apiKey = AppConfig.apiKey,
+        )
+
+        val result = try {
+            val rewrittenQuery = RagQueryRewriter(
+                llmGateway = llmGateway,
+                agentConfig = AgentConfig(
+                    model = AppConfig.MODEL,
+                    maxTokens = 500,
+                    temperature = 0.0,
+                ),
+            ).rewrite(question)
+
+            RagImprovedRetriever(
+                embeddingGateway = embeddingGateway,
+            ).retrieve(
+                index = ragIndex,
+                question = question,
+                rewrittenQuery = rewrittenQuery,
+                settings = RagRetrievalSettings(
+                    topKBefore = 12,
+                    topKAfter = 5,
+                    minSimilarityScore = 0.35,
+                    relativeScoreDrop = 0.10,
+                ),
+            )
+        } finally {
+            okHttpClient.dispatcher.executorService.shutdown()
+            okHttpClient.connectionPool.evictAll()
+        }
+
+        val outputPath = Path.of("rag-index").resolve("rag-reranking-preview.md")
+
+        RagRerankingReportWriter().write(
+            result = result,
+            outputPath = outputPath,
+        )
+
+        println("RAG reranking preview completed.")
+        println("Index: $indexPath")
+        println("Embedding model: ${embeddingGateway.modelName}")
+        println("Report saved to: $outputPath")
+
+        return@runBlocking
+    }
+
     if (args.firstOrNull() == "rag-evaluate") {
         val indexPath = args.getOrNull(1)
         val embeddingProvider = args.getOrNull(2) ?: "ollama"
