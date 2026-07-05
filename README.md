@@ -1,25 +1,13 @@
 # Agent Playground
 
-Kotlin/JVM CLI playground for experimenting with AI agent architecture
+Kotlin/JVM CLI playground for experimenting with AI agent architecture, stateful task orchestration and local RAG
 
-The project started as a context-management playground and now includes a stateful agent with explicit memory layers, markdown-based personalization, task state management and stage-based orchestration
+The project started as a context-management playground and now focuses on two main areas:
+
+* **Stateful Agent** — an orchestrated assistant with explicit memory layers, task state and stage-based execution
+* **RAG pipeline and RAG chat** — local document indexing, embeddings, retrieval, filtering/reranking, grounded answers with sources and quotes, and a production-like CLI chat with task memory
 
 ## Modes
-
-The project contains two experimental agent modes
-
-### Context Agent
-
-The context agent is used to experiment with different ways of building LLM context
-
-Supported context strategies
-
-* **Full History** — sends the full conversation history
-* **Sliding Window** — sends only the last N messages
-* **Sticky Facts** — sends extracted key facts plus recent messages
-* **Branching** — allows independent conversation branches from a checkpoint
-
-This mode was used to compare context size, information loss, token usage and branch isolation
 
 ### Stateful Agent
 
@@ -57,6 +45,155 @@ Validation may return the task back to execution if the result is incomplete or 
 ```text
 VALIDATION -> EXECUTION -> VALIDATION
 ```
+
+Run:
+
+```powershell
+.\gradlew.bat --console=plain -q run
+```
+
+### RAG indexing
+
+The RAG indexing mode builds a local JSON index from documents
+
+The pipeline:
+
+```text
+documents -> chunks -> embeddings -> JSON index
+```
+
+Supported source files:
+
+* Markdown files (`.md`)
+* Text files (`.txt`)
+* Kotlin files (`.kt`)
+
+Implemented chunking strategies:
+
+* **Fixed-size chunking** — splits text into chunks of roughly equal size with overlap
+* **Structure-aware chunking** — uses document structure where possible: Markdown headings, Kotlin declarations and text paragraphs
+
+Implemented embedding providers:
+
+* **deterministic** — local deterministic embedding for smoke tests and reproducible checks
+* **ollama** — local Ollama embedding model, recommended for real RAG checks
+
+Recommended multilingual model:
+
+```powershell
+ollama pull bge-m3
+```
+
+Build index:
+
+```powershell
+.\gradlew.bat --console=plain -q run --args="build-rag-index rag-documents rag-index ollama bge-m3"
+```
+
+Generated files:
+
+```text
+rag-index/fixed-size-index.json
+rag-index/structure-index.json
+```
+
+`rag-documents/` and `rag-index/` are local working directories and should not be committed
+
+### RAG chat
+
+The RAG chat is a production-like CLI mode on top of the local RAG index
+
+For every user message it:
+
+* keeps the current dialogue history;
+* updates task memory;
+* rewrites the query for mixed Russian/English technical documents;
+* searches the local RAG index;
+* applies similarity filtering and heuristic reranking;
+* generates a grounded answer;
+* always prints sources;
+* prints quotes from selected chunks;
+* validates that quoted text exists in the selected chunks;
+* returns "Don't know" when the retrieved context is too weak.
+
+Task memory stores only the current dialogue state:
+
+* user goal;
+* user clarifications;
+* constraints;
+* important terms.
+
+It does not store facts from the RAG documents. Factual claims should come from retrieved chunks.
+
+Run:
+
+```powershell
+.\gradlew.bat --console=plain -q run --args="rag-chat rag-index\structure-index.json ollama bge-m3"
+```
+
+Chat commands:
+
+```text
+/memory — show current task memory
+/exit  — exit the chat
+```
+
+## RAG retrieval details
+
+The improved retrieval pipeline uses several steps:
+
+```text
+user message
+-> task memory enriched retrieval query
+-> query rewrite
+-> vector search topKBefore
+-> similarity threshold
+-> relative score filtering
+-> heuristic reranking
+-> topKAfter chunks
+-> grounded answer
+```
+
+The heuristic reranker combines:
+
+* embedding similarity score;
+* keyword matches in `source`, `title`, `section` and chunk text.
+
+This keeps the implementation simple and deterministic while still making retrieval cleaner for mixed-language technical documents
+
+## Grounding and anti-hallucination
+
+Grounded RAG answers use a structured JSON contract internally:
+
+```json
+{
+  "answer": "...",
+  "sources": [
+    {
+      "source": "...",
+      "section": "...",
+      "chunk_id": "..."
+    }
+  ],
+  "quotes": [
+    {
+      "source": "...",
+      "section": "...",
+      "chunk_id": "...",
+      "text": "exact quote from chunk"
+    }
+  ]
+}
+```
+
+The application validates:
+
+* sources are present;
+* quotes are present;
+* referenced chunks were actually selected by retrieval;
+* quote text is an exact fragment of the selected chunk text.
+
+If the selected context is missing or below the similarity threshold, the chat does not produce a confident answer and returns an "I do not know" style response.
 
 ## Project invariants
 
@@ -222,17 +359,6 @@ Long-term memory is edited manually through Markdown files
 /exit — exit the app
 ```
 
-## Context Agent commands
-
-```text
-/history                                      — show current session history
-/clear                                        — clear current branch, facts and summary
-/strategy [current|full|sliding|facts]         — switch context strategy
-/branch [current|list|create <name>|switch <name>] — manage conversation branches
-/stress-context [repeat]                      — send project files as a large context payload
-/exit                                         — exit the app
-```
-
 ## Environment variables
 
 The API key is read from an environment variable:
@@ -243,10 +369,30 @@ The API key is read from an environment variable:
 
 Restart the terminal or IDE after setting the variable
 
-## Run
+## Run commands
+
+Build the project:
 
 ```powershell
-.\gradlew.bat run
+.\gradlew.bat --console=plain -q build
+```
+
+Run Stateful Agent:
+
+```powershell
+.\gradlew.bat --console=plain -q run
+```
+
+Build RAG index:
+
+```powershell
+.\gradlew.bat --console=plain -q run --args="build-rag-index rag-documents rag-index ollama bge-m3"
+```
+
+Run RAG chat:
+
+```powershell
+.\gradlew.bat --console=plain -q run --args="rag-chat rag-index\structure-index.json ollama bge-m3"
 ```
 
 ## Persistent storage
@@ -285,11 +431,12 @@ Some modes also print estimated context statistics. Token estimates are approxim
 
 * CLI is the only presentation layer
 * Runtime storage is local and file-based
-* Only one main persisted session is supported
-* Branches are stored in memory only
+* RAG chat history and task memory are stored only in the current CLI process
+* RAG index is stored as local JSON, not as a production vector database
+* RAG retrieval uses embedding similarity plus heuristic filtering/reranking
+* Grounding validation checks quotes and sources, but it does not fully prove that the answer meaning is correct
 * Working memory extraction depends on the LLM response
 * Long-term memory is edited manually through Markdown files
-* User profiles are file-based and switched through active-profile.txt
-* Context compression and sticky facts are experimental strategies from the context-management mode
+* User profiles are file-based and switched through `active-profile.txt`
 * Task orchestration is stage-based, but still depends on LLM output quality inside each stage
 * Task artifacts currently store the latest artifact per stage, not a full versioned event log
