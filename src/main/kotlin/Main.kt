@@ -16,8 +16,14 @@ import domain.rag.DocumentLoader
 import domain.rag.EmbeddingGateway
 import domain.rag.FixedSizeChunker
 import domain.rag.OllamaEmbeddingGateway
+import domain.rag.RagChatAgent
+import presentation.rag.RagChatCli
+import domain.rag.RagChatTaskMemoryUpdater
 import domain.rag.RagIndexBuilder
+import domain.rag.RagIndexReader
 import domain.rag.RagIndexWriter
+import domain.rag.RagQueryRewriter
+import domain.rag.RagRetrievalSettings
 import domain.rag.StructureAwareChunker
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
@@ -36,11 +42,14 @@ import java.nio.file.Path
 import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
-    val command = args.firstOrNull()
-
-    when (command) {
+    when (val command = args.firstOrNull()) {
         "build-rag-index" -> {
             buildRagIndex(args)
+            return@runBlocking
+        }
+
+        "rag-chat" -> {
+            runRagChat(args)
             return@runBlocking
         }
 
@@ -53,6 +62,7 @@ fun main(args: Array<String>) = runBlocking {
             println("Unknown command: $command")
             println("Available commands:")
             println("  build-rag-index <documents-root> [output-root] [deterministic|ollama] [embedding-model]")
+            println("  rag-chat [index-path] [deterministic|ollama] [embedding-model]")
             println("  stateful-agent")
             return@runBlocking
         }
@@ -127,6 +137,90 @@ private fun createEmbeddingGateway(
             json = json,
         )
         else -> error("Unsupported embedding provider: $provider")
+    }
+}
+
+private suspend fun runRagChat(args: Array<String>) {
+    val indexPath = args.getOrNull(1)
+        ?.takeIf { it.isNotBlank() }
+        ?: Path.of("rag-index", "structure-index.json").toString()
+
+    val embeddingProvider = args.getOrNull(2) ?: "ollama"
+    val embeddingModel = args.getOrNull(3) ?: "bge-m3"
+
+    val indexFile = Path.of(indexPath)
+
+    if (!Files.exists(indexFile)) {
+        println("Не найден RAG-индекс: $indexFile")
+        println("Сначала соберите индекс:")
+        println("""  .\gradlew.bat --console=plain -q run --args="build-rag-index rag-documents rag-index ollama bge-m3"""")
+        return
+    }
+
+    println("Запускаю RAG-чат.")
+    println("Индекс: $indexFile")
+    println("Провайдер эмбеддингов: $embeddingProvider")
+    println("Модель эмбеддингов: $embeddingModel")
+    println()
+
+    val json = createJson()
+    val embeddingGateway = createEmbeddingGateway(
+        provider = embeddingProvider,
+        model = embeddingModel,
+        json = json,
+    )
+
+    val ragIndex = RagIndexReader(json).read(indexFile)
+
+    val okHttpClient = createOkHttpClient()
+
+    val llmGateway = createLlmGateway(
+        json = json,
+        okHttpClient = okHttpClient,
+    )
+
+    val answerConfig = AgentConfig(
+        model = AppConfig.MODEL,
+        maxTokens = 1_500,
+        temperature = 0.0,
+    )
+
+    val shortConfig = AgentConfig(
+        model = AppConfig.MODEL,
+        maxTokens = 600,
+        temperature = 0.0,
+    )
+
+    val agent = RagChatAgent(
+        llmGateway = llmGateway,
+        answerConfig = answerConfig,
+        embeddingGateway = embeddingGateway,
+        queryRewriter = RagQueryRewriter(
+            llmGateway = llmGateway,
+            agentConfig = shortConfig,
+        ),
+        taskMemoryUpdater = RagChatTaskMemoryUpdater(
+            llmGateway = llmGateway,
+            config = shortConfig,
+            json = json,
+        ),
+        json = json,
+    )
+
+    try {
+        RagChatCli(
+            index = ragIndex,
+            agent = agent,
+            settings = RagRetrievalSettings(
+                topKBefore = 12,
+                topKAfter = 5,
+                minSimilarityScore = 0.35,
+                relativeScoreDrop = 0.10,
+            ),
+        ).start()
+    } finally {
+        okHttpClient.dispatcher.executorService.shutdown()
+        okHttpClient.connectionPool.evictAll()
     }
 }
 
