@@ -2,6 +2,8 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
+import data.local.OllamaApi
+import data.local.OllamaLocalLlmClient
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.JsonTaskArtifactRepository
 import data.statefulagent.memory.JsonTaskContextRepository
@@ -35,6 +37,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import presentation.local.LocalLlmCli
 import presentation.statefulagent.StatefulAgentCli
 import retrofit2.Retrofit
 import java.nio.file.Files
@@ -43,6 +46,16 @@ import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
     when (val command = args.firstOrNull()) {
+        "local-llm" -> {
+            runLocalLlm(args)
+            return@runBlocking
+        }
+
+        "local-llm-demo" -> {
+            runLocalLlmDemo(args)
+            return@runBlocking
+        }
+
         "build-rag-index" -> {
             buildRagIndex(args)
             return@runBlocking
@@ -61,11 +74,83 @@ fun main(args: Array<String>) = runBlocking {
         else -> {
             println("Unknown command: $command")
             println("Available commands:")
+            println("  local-llm [model] <prompt>")
+            println("  local-llm-demo [model]")
             println("  build-rag-index <documents-root> [output-root] [deterministic|ollama] [embedding-model]")
             println("  rag-chat [index-path] [deterministic|ollama] [embedding-model]")
             println("  stateful-agent")
             return@runBlocking
         }
+    }
+}
+
+private suspend fun runLocalLlm(args: Array<String>) {
+    val model = args.getOrNull(1) ?: "qwen2.5:3b"
+    val prompt = args.drop(2).joinToString(" ")
+
+    if (prompt.isBlank()) {
+        println("Usage:")
+        println("""  .\gradlew.bat --console=plain -q run --args="local-llm [model] <prompt>"""")
+        println()
+        println("Example:")
+        println("""  .\gradlew.bat --console=plain -q run --args="local-llm qwen2.5:3b Что такое локальная LLM?"""")
+        return
+    }
+
+    val json = createJson()
+    val okHttpClient = createOkHttpClient()
+
+    val retrofit = Retrofit.Builder()
+        .baseUrl("http://localhost:11434/")
+        .client(okHttpClient)
+        .addConverterFactory(
+            json.asConverterFactory("application/json".toMediaType()),
+        )
+        .build()
+
+    val client = OllamaLocalLlmClient(
+        api = retrofit.create(OllamaApi::class.java),
+        model = model,
+    )
+
+    try {
+        LocalLlmCli(
+            client = client,
+            model = model,
+        ).askOnce(prompt)
+    } finally {
+        okHttpClient.dispatcher.executorService.shutdown()
+        okHttpClient.connectionPool.evictAll()
+    }
+}
+
+private suspend fun runLocalLlmDemo(args: Array<String>) {
+    val model = args.getOrNull(1) ?: "qwen2.5:3b"
+
+    val json = createJson()
+    val okHttpClient = createOkHttpClient()
+
+    val retrofit = Retrofit.Builder()
+        .baseUrl("http://localhost:11434/")
+        .client(okHttpClient)
+        .addConverterFactory(
+            json.asConverterFactory("application/json".toMediaType()),
+        )
+        .build()
+
+    val client = OllamaLocalLlmClient(
+        api = retrofit.create(OllamaApi::class.java),
+        model = model,
+    )
+
+    try {
+        LocalLlmCli(
+            client = client,
+            model = model,
+        ).runDemo()
+    } finally {
+        okHttpClient.dispatcher.executorService.shutdown()
+        okHttpClient.connectionPool.evictAll()
     }
 }
 
