@@ -3,8 +3,11 @@ import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
 import data.local.OllamaApi
+import data.local.OllamaChatApi
+import data.local.OllamaChatLlmGateway
 import data.local.OllamaLocalLlmClient
 import data.memory.JsonSessionHistoryRepository
+import domain.llm.LlmGateway
 import data.statefulagent.memory.JsonTaskArtifactRepository
 import data.statefulagent.memory.JsonTaskContextRepository
 import data.statefulagent.memory.JsonTaskStateRepository
@@ -19,6 +22,9 @@ import domain.rag.EmbeddingGateway
 import domain.rag.FixedSizeChunker
 import domain.rag.OllamaEmbeddingGateway
 import domain.rag.RagChatAgent
+import domain.rag.RagChatBackendResult
+import domain.rag.RagChatComparisonReportWriter
+import domain.rag.RagChatComparisonResult
 import presentation.rag.RagChatCli
 import domain.rag.RagChatTaskMemoryUpdater
 import domain.rag.RagIndexBuilder
@@ -43,6 +49,7 @@ import retrofit2.Retrofit
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import kotlin.system.measureTimeMillis
 
 fun main(args: Array<String>) = runBlocking {
     when (val command = args.firstOrNull()) {
@@ -66,6 +73,11 @@ fun main(args: Array<String>) = runBlocking {
             return@runBlocking
         }
 
+        "rag-chat-compare" -> {
+            runRagChatCompare(args)
+            return@runBlocking
+        }
+
         "stateful-agent", null -> {
             runStatefulAgent()
             return@runBlocking
@@ -77,7 +89,8 @@ fun main(args: Array<String>) = runBlocking {
             println("  local-llm [model] <prompt>")
             println("  local-llm-demo [model]")
             println("  build-rag-index <documents-root> [output-root] [deterministic|ollama] [embedding-model]")
-            println("  rag-chat [index-path] [deterministic|ollama] [embedding-model]")
+            println("  rag-chat [index-path] [deterministic|ollama] [embedding-model] [cloud|local] [local-llm-model]")
+            println("  rag-chat-compare <question>")
             println("  stateful-agent")
             return@runBlocking
         }
@@ -232,6 +245,8 @@ private suspend fun runRagChat(args: Array<String>) {
 
     val embeddingProvider = args.getOrNull(2) ?: "ollama"
     val embeddingModel = args.getOrNull(3) ?: "bge-m3"
+    val llmProvider = args.getOrNull(4) ?: "cloud"
+    val localLlmModel = args.getOrNull(5) ?: "qwen2.5:3b"
 
     val indexFile = Path.of(indexPath)
 
@@ -246,6 +261,10 @@ private suspend fun runRagChat(args: Array<String>) {
     println("Индекс: $indexFile")
     println("Провайдер эмбеддингов: $embeddingProvider")
     println("Модель эмбеддингов: $embeddingModel")
+    println("LLM provider: $llmProvider")
+    if (llmProvider == "local") {
+        println("Локальная LLM: $localLlmModel")
+    }
     println()
 
     val json = createJson()
@@ -258,37 +277,31 @@ private suspend fun runRagChat(args: Array<String>) {
     val ragIndex = RagIndexReader(json).read(indexFile)
 
     val okHttpClient = createOkHttpClient()
-
-    val llmGateway = createLlmGateway(
+    val llmModel = if (llmProvider == "local") localLlmModel else AppConfig.MODEL
+    val llmGateway = createRagLlmGateway(
+        provider = llmProvider,
+        localModel = localLlmModel,
         json = json,
         okHttpClient = okHttpClient,
     )
 
     val answerConfig = AgentConfig(
-        model = AppConfig.MODEL,
+        model = llmModel,
         maxTokens = 1_500,
         temperature = 0.0,
     )
 
     val shortConfig = AgentConfig(
-        model = AppConfig.MODEL,
+        model = llmModel,
         maxTokens = 600,
         temperature = 0.0,
     )
 
-    val agent = RagChatAgent(
+    val agent = createRagChatAgent(
         llmGateway = llmGateway,
         answerConfig = answerConfig,
+        shortConfig = shortConfig,
         embeddingGateway = embeddingGateway,
-        queryRewriter = RagQueryRewriter(
-            llmGateway = llmGateway,
-            agentConfig = shortConfig,
-        ),
-        taskMemoryUpdater = RagChatTaskMemoryUpdater(
-            llmGateway = llmGateway,
-            config = shortConfig,
-            json = json,
-        ),
         json = json,
     )
 
@@ -296,18 +309,156 @@ private suspend fun runRagChat(args: Array<String>) {
         RagChatCli(
             index = ragIndex,
             agent = agent,
-            settings = RagRetrievalSettings(
-                topKBefore = 12,
-                topKAfter = 5,
-                minSimilarityScore = 0.35,
-                relativeScoreDrop = 0.10,
-            ),
+            settings = defaultRagRetrievalSettings(),
         ).start()
     } finally {
         okHttpClient.dispatcher.executorService.shutdown()
         okHttpClient.connectionPool.evictAll()
     }
 }
+
+private suspend fun runRagChatCompare(args: Array<String>) {
+    val question = args.drop(1).joinToString(" ").ifBlank {
+        "Объясни, как в проекте устроен RAG-пайплайн и где используются источники"
+    }
+
+    val indexPath = Path.of("rag-index", "structure-index.json").toString()
+    val embeddingProvider = "ollama"
+    val embeddingModel = "bge-m3"
+    val localLlmModel = "qwen2.5:3b"
+    val cloudModel = AppConfig.MODEL
+    val indexFile = Path.of(indexPath)
+
+    if (!Files.exists(indexFile)) {
+        println("Не найден RAG-индекс: $indexFile")
+        println("Сначала соберите индекс:")
+        println("""  .\gradlew.bat --console=plain -q run --args="build-rag-index rag-documents rag-index ollama bge-m3"""")
+        return
+    }
+
+    println("Сравниваю локальный и облачный RAG.")
+    println("Вопрос: $question")
+    println("Индекс: $indexFile")
+    println("Локальная модель: $localLlmModel")
+    println("Облачная модель: $cloudModel")
+    println()
+
+    val json = createJson()
+    val embeddingGateway = createEmbeddingGateway(
+        provider = embeddingProvider,
+        model = embeddingModel,
+        json = json,
+    )
+    val ragIndex = RagIndexReader(json).read(indexFile)
+    val settings = defaultRagRetrievalSettings()
+
+    val localHttpClient = createOkHttpClient()
+    val cloudHttpClient = createOkHttpClient()
+
+    try {
+        val localGateway = createRagLlmGateway(
+            provider = "local",
+            localModel = localLlmModel,
+            json = json,
+            okHttpClient = localHttpClient,
+        )
+        val cloudGateway = createRagLlmGateway(
+            provider = "cloud",
+            localModel = localLlmModel,
+            json = json,
+            okHttpClient = cloudHttpClient,
+        )
+
+        val localAgent = createRagChatAgent(
+            llmGateway = localGateway,
+            answerConfig = AgentConfig(
+                model = localLlmModel,
+                maxTokens = 1_500,
+                temperature = 0.0,
+            ),
+            shortConfig = AgentConfig(
+                model = localLlmModel,
+                maxTokens = 600,
+                temperature = 0.0,
+            ),
+            embeddingGateway = embeddingGateway,
+            json = json,
+        )
+
+        val cloudAgent = createRagChatAgent(
+            llmGateway = cloudGateway,
+            answerConfig = AgentConfig(
+                model = cloudModel,
+                maxTokens = 1_500,
+                temperature = 0.0,
+            ),
+            shortConfig = AgentConfig(
+                model = cloudModel,
+                maxTokens = 600,
+                temperature = 0.0,
+            ),
+            embeddingGateway = embeddingGateway,
+            json = json,
+        )
+
+        lateinit var localTurn: domain.rag.RagChatTurnResult
+        val localDurationMs = measureTimeMillis {
+            localTurn = localAgent.handleUserMessage(
+                index = ragIndex,
+                state = domain.rag.RagChatSessionState(),
+                userMessage = question,
+                settings = settings,
+            )
+        }
+
+        lateinit var cloudTurn: domain.rag.RagChatTurnResult
+        val cloudDurationMs = measureTimeMillis {
+            cloudTurn = cloudAgent.handleUserMessage(
+                index = ragIndex,
+                state = domain.rag.RagChatSessionState(),
+                userMessage = question,
+                settings = settings,
+            )
+        }
+
+        val result = RagChatComparisonResult(
+            question = question,
+            indexPath = indexPath,
+            embeddingProvider = embeddingProvider,
+            embeddingModel = embeddingModel,
+            localModel = localLlmModel,
+            cloudModel = cloudModel,
+            localResult = RagChatBackendResult(
+                provider = "local",
+                model = localLlmModel,
+                durationMs = localDurationMs,
+                answer = localTurn.answer,
+            ),
+            cloudResult = RagChatBackendResult(
+                provider = "cloud",
+                model = cloudModel,
+                durationMs = cloudDurationMs,
+                answer = cloudTurn.answer,
+            ),
+        )
+
+        val outputPath = Path.of("reports", "day-28-local-rag-comparison.md")
+        RagChatComparisonReportWriter().write(
+            result = result,
+            outputPath = outputPath,
+        )
+
+        println("Сравнительный отчет сохранен: $outputPath")
+        println("Local: ${localDurationMs}ms, valid=${localTurn.answer.validation.isValid}")
+        println("Cloud: ${cloudDurationMs}ms, valid=${cloudTurn.answer.validation.isValid}")
+    } finally {
+        localHttpClient.dispatcher.executorService.shutdown()
+        localHttpClient.connectionPool.evictAll()
+        cloudHttpClient.dispatcher.executorService.shutdown()
+        cloudHttpClient.connectionPool.evictAll()
+    }
+}
+
 
 private suspend fun runStatefulAgent() {
     val okHttpClient = createOkHttpClient()
@@ -403,6 +554,70 @@ private suspend fun runStatefulAgent() {
         okHttpClient.dispatcher.executorService.shutdown()
         okHttpClient.connectionPool.evictAll()
     }
+}
+
+private fun createRagLlmGateway(
+    provider: String,
+    localModel: String,
+    json: Json,
+    okHttpClient: OkHttpClient,
+): LlmGateway {
+    return when (provider) {
+        "cloud" -> createLlmGateway(
+            json = json,
+            okHttpClient = okHttpClient,
+        )
+
+        "local" -> {
+            val retrofit = Retrofit.Builder()
+                .baseUrl("http://localhost:11434/")
+                .client(okHttpClient)
+                .addConverterFactory(
+                    json.asConverterFactory("application/json".toMediaType()),
+                )
+                .build()
+
+            OllamaChatLlmGateway(
+                api = retrofit.create(OllamaChatApi::class.java),
+                defaultModel = localModel,
+            )
+        }
+
+        else -> error("Unsupported LLM provider: $provider")
+    }
+}
+
+private fun createRagChatAgent(
+    llmGateway: LlmGateway,
+    answerConfig: AgentConfig,
+    shortConfig: AgentConfig,
+    embeddingGateway: EmbeddingGateway,
+    json: Json,
+): RagChatAgent {
+    return RagChatAgent(
+        llmGateway = llmGateway,
+        answerConfig = answerConfig,
+        embeddingGateway = embeddingGateway,
+        queryRewriter = RagQueryRewriter(
+            llmGateway = llmGateway,
+            agentConfig = shortConfig,
+        ),
+        taskMemoryUpdater = RagChatTaskMemoryUpdater(
+            llmGateway = llmGateway,
+            config = shortConfig,
+            json = json,
+        ),
+        json = json,
+    )
+}
+
+private fun defaultRagRetrievalSettings(): RagRetrievalSettings {
+    return RagRetrievalSettings(
+        topKBefore = 12,
+        topKAfter = 5,
+        minSimilarityScore = 0.35,
+        relativeScoreDrop = 0.10,
+    )
 }
 
 private fun createLlmGateway(
