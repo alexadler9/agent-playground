@@ -2,6 +2,8 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
+import data.local.OllamaApi
+import data.local.OllamaLocalLlmClient
 import data.memory.JsonSessionHistoryRepository
 import data.statefulagent.memory.JsonTaskArtifactRepository
 import data.statefulagent.memory.JsonTaskContextRepository
@@ -9,6 +11,8 @@ import data.statefulagent.memory.JsonTaskStateRepository
 import data.statefulagent.memory.MarkdownInvariantRepository
 import data.statefulagent.memory.MarkdownLongTermMemoryRepository
 import data.statefulagent.memory.MarkdownUserProfileRepository
+import domain.antiprocrastination.AntiProcrastinatorDemoCases
+import domain.antiprocrastination.AntiProcrastinatorOptimizationRunner
 import domain.model.AgentConfig
 import domain.model.ChatSession
 import domain.rag.DeterministicEmbeddingGateway
@@ -35,14 +39,21 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import presentation.antiprocrastination.AntiProcrastinatorOptimizationReportWriter
 import presentation.statefulagent.StatefulAgentCli
 import retrofit2.Retrofit
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import kotlin.jvm.java
 
 fun main(args: Array<String>) = runBlocking {
     when (val command = args.firstOrNull()) {
+        "anti-procrastinator-compare" -> {
+            runAntiProcrastinatorCompare(args)
+            return@runBlocking
+        }
+
         "build-rag-index" -> {
             buildRagIndex(args)
             return@runBlocking
@@ -61,12 +72,58 @@ fun main(args: Array<String>) = runBlocking {
         else -> {
             println("Unknown command: $command")
             println("Available commands:")
+            println("  anti-procrastinator-compare [model]")
             println("  build-rag-index <documents-root> [output-root] [deterministic|ollama] [embedding-model]")
             println("  rag-chat [index-path] [deterministic|ollama] [embedding-model]")
             println("  stateful-agent")
             return@runBlocking
         }
     }
+}
+
+private suspend fun runAntiProcrastinatorCompare(args: Array<String>) {
+    val model = args.getOrNull(1) ?: "qwen2.5:3b"
+
+    val json = createJson()
+    val okHttpClient = createOkHttpClient()
+
+    val retrofit = Retrofit.Builder()
+        .baseUrl("http://localhost:11434/")
+        .client(okHttpClient)
+        .addConverterFactory(
+            json.asConverterFactory("application/json".toMediaType()),
+        )
+        .build()
+
+    val client = OllamaLocalLlmClient(
+        api = retrofit.create(OllamaApi::class.java),
+        model = model,
+    )
+
+    val result = try {
+        AntiProcrastinatorOptimizationRunner(
+            client = client,
+            model = model,
+        ).compareBatch(
+            requests = AntiProcrastinatorDemoCases.cases,
+        )
+    } finally {
+        okHttpClient.dispatcher.executorService.shutdown()
+        okHttpClient.connectionPool.evictAll()
+    }
+
+    val outputPath = Path.of("reports")
+        .resolve("local-llm-optimization.md")
+
+    AntiProcrastinatorOptimizationReportWriter().write(
+        result = result,
+        outputPath = outputPath,
+    )
+
+    println("Anti-procrastinator optimization completed")
+    println("Model: $model")
+    println("Cases: ${result.items.size}")
+    println("Report saved to: $outputPath")
 }
 
 private suspend fun buildRagIndex(args: Array<String>) {
