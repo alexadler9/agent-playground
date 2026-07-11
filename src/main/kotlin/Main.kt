@@ -2,39 +2,29 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import config.AppConfig
 import data.llm.RetrofitLlmGateway
 import data.llm.api.ChatCompletionApi
+import data.local.OllamaChatApi
+import data.local.OllamaChatClient
 import data.memory.JsonSessionHistoryRepository
-import data.statefulagent.memory.JsonTaskArtifactRepository
-import data.statefulagent.memory.JsonTaskContextRepository
-import data.statefulagent.memory.JsonTaskStateRepository
-import data.statefulagent.memory.MarkdownInvariantRepository
-import data.statefulagent.memory.MarkdownLongTermMemoryRepository
-import data.statefulagent.memory.MarkdownUserProfileRepository
+import data.statefulagent.memory.*
 import domain.model.AgentConfig
 import domain.model.ChatSession
-import domain.rag.DeterministicEmbeddingGateway
-import domain.rag.DocumentLoader
-import domain.rag.EmbeddingGateway
-import domain.rag.FixedSizeChunker
-import domain.rag.OllamaEmbeddingGateway
-import domain.rag.RagChatAgent
-import presentation.rag.RagChatCli
-import domain.rag.RagChatTaskMemoryUpdater
-import domain.rag.RagIndexBuilder
-import domain.rag.RagIndexReader
-import domain.rag.RagIndexWriter
-import domain.rag.RagQueryRewriter
-import domain.rag.RagRetrievalSettings
-import domain.rag.StructureAwareChunker
+import domain.privatechat.PrivateChatLimits
+import domain.privatechat.PrivateChatLlmSettings
+import domain.privatechat.PrivateChatService
+import domain.rag.*
 import domain.statefulagent.StatefulAgentService
 import domain.statefulagent.memory.LlmTaskContextUpdater
 import domain.statefulagent.stage.ExecutionStageAgent
 import domain.statefulagent.stage.PlanningStageAgent
 import domain.statefulagent.stage.ValidationStageAgent
 import domain.statefulagent.validation.TaskTransitionValidator
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import presentation.privatechat.PrivateChatHttpServer
+import presentation.rag.RagChatCli
 import presentation.statefulagent.StatefulAgentCli
 import retrofit2.Retrofit
 import java.nio.file.Files
@@ -43,6 +33,11 @@ import java.time.Duration
 
 fun main(args: Array<String>) = runBlocking {
     when (val command = args.firstOrNull()) {
+        "private-ai-service" -> {
+            runPrivateAiService(args)
+            return@runBlocking
+        }
+
         "build-rag-index" -> {
             buildRagIndex(args)
             return@runBlocking
@@ -59,6 +54,7 @@ fun main(args: Array<String>) = runBlocking {
         }
 
         else -> {
+            println("  private-ai-service [port] [model]")
             println("Unknown command: $command")
             println("Available commands:")
             println("  build-rag-index <documents-root> [output-root] [deterministic|ollama] [embedding-model]")
@@ -66,6 +62,85 @@ fun main(args: Array<String>) = runBlocking {
             println("  stateful-agent")
             return@runBlocking
         }
+    }
+}
+
+private suspend fun runPrivateAiService(args: Array<String>) {
+    val port = args.getOrNull(1)?.toIntOrNull() ?: 8080
+    val model = args.getOrNull(2) ?: "qwen2.5:3b"
+    val host = "0.0.0.0"
+
+    val expectedToken = System.getenv("PRIVATE_AI_TOKEN")
+        ?: "local-dev-token"
+
+    val limits = PrivateChatLimits(
+        maxMessages = envInt("PRIVATE_AI_MAX_MESSAGES", 20),
+        maxMessageChars = envInt("PRIVATE_AI_MAX_MESSAGE_CHARS", 2_000),
+        maxTotalContextChars = envInt("PRIVATE_AI_MAX_TOTAL_CONTEXT_CHARS", 12_000),
+        maxRequests = envInt("PRIVATE_AI_MAX_REQUESTS", 10),
+        rateLimitWindowMs = envLong("PRIVATE_AI_RATE_LIMIT_WINDOW_MS", 60_000),
+    )
+
+    val llmSettings = PrivateChatLlmSettings(
+        temperature = envDouble("PRIVATE_AI_TEMPERATURE", 0.3),
+        maxTokens = envInt("PRIVATE_AI_MAX_TOKENS", 700),
+        contextWindow = envInt("PRIVATE_AI_CONTEXT_WINDOW", 4_096),
+    )
+
+    val json = createJson()
+    val okHttpClient = createOkHttpClient()
+
+    val retrofit = Retrofit.Builder()
+        .baseUrl("http://localhost:11434/")
+        .client(okHttpClient)
+        .addConverterFactory(
+            json.asConverterFactory("application/json".toMediaType()),
+        )
+        .build()
+
+    val chatClient = OllamaChatClient(
+        api = retrofit.create(OllamaChatApi::class.java),
+        model = model,
+    )
+
+    val chatService = PrivateChatService(
+        client = chatClient,
+        model = model,
+        limits = limits,
+        llmSettings = llmSettings,
+    )
+
+    val server = PrivateChatHttpServer(
+        host = host,
+        port = port,
+        expectedToken = expectedToken,
+        json = json,
+        chatService = chatService,
+        model = model,
+        limits = limits,
+    )
+
+    server.start()
+
+    println("Private AI service started.")
+    println("URL: http://localhost:$port")
+    println("Host binding: $host:$port")
+    println("Model: $model")
+    println("Token source: ${if (System.getenv("PRIVATE_AI_TOKEN") == null) "default local-dev-token" else "PRIVATE_AI_TOKEN env"}")
+    println("Max messages: ${limits.maxMessages}")
+    println("Max total context chars: ${limits.maxTotalContextChars}")
+    println("Rate limit: ${limits.maxRequests} requests / ${limits.rateLimitWindowMs} ms")
+    println("LLM temperature: ${llmSettings.temperature}")
+    println("LLM max tokens: ${llmSettings.maxTokens}")
+    println("LLM context window: ${llmSettings.contextWindow}")
+    println("Press Ctrl+C to stop.")
+
+    try {
+        awaitCancellation()
+    } finally {
+        server.stop()
+        okHttpClient.dispatcher.executorService.shutdown()
+        okHttpClient.connectionPool.evictAll()
     }
 }
 
@@ -353,4 +428,25 @@ private fun createJson(): Json {
         explicitNulls = false
         ignoreUnknownKeys = true
     }
+}
+
+private fun envInt(
+    name: String,
+    defaultValue: Int,
+): Int {
+    return System.getenv(name)?.toIntOrNull() ?: defaultValue
+}
+
+private fun envLong(
+    name: String,
+    defaultValue: Long,
+): Long {
+    return System.getenv(name)?.toLongOrNull() ?: defaultValue
+}
+
+private fun envDouble(
+    name: String,
+    defaultValue: Double,
+): Double {
+    return System.getenv(name)?.toDoubleOrNull() ?: defaultValue
 }
