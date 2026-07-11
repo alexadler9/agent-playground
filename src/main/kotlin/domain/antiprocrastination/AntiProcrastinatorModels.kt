@@ -8,31 +8,8 @@ data class AntiProcrastinatorRequest(
     val previousContext: String = "",
 )
 
-data class AntiProcrastinatorLlmSettings(
-    val mode: String,
-    val temperature: Double,
-    val maxTokens: Int,
-    val promptName: String,
-)
-
-data class AntiProcrastinatorRunResult(
-    val mode: String,
-    val model: String,
-    val settings: AntiProcrastinatorLlmSettings,
-    val prompt: String,
+data class AntiProcrastinatorResult(
     val answer: String,
-    val durationMs: Long,
-    val promptTokens: Int?,
-    val outputTokens: Int?,
-)
-
-data class AntiProcrastinatorComparisonResult(
-    val request: AntiProcrastinatorRequest,
-    val baseline: AntiProcrastinatorRunResult,
-    val optimized: AntiProcrastinatorRunResult,
-)
-
-data class AntiProcrastinatorBatchComparisonResult(
     val model: String,
-    val items: List<AntiProcrastinatorComparisonResult>,
+    val durationMs: Long,
 )
