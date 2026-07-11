@@ -3,10 +3,10 @@ package data.local
 import retrofit2.http.Body
 import retrofit2.http.POST
 
-interface OllamaApi {
+interface OllamaChatApi {
 
-    @POST("api/generate")
-    suspend fun generate(
-        @Body request: OllamaGenerateRequest,
-    ): OllamaGenerateResponse
+    @POST("api/chat")
+    suspend fun chat(
+        @Body request: OllamaChatRequest,
+    ): OllamaChatResponse
 }
