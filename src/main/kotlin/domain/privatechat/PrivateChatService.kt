@@ -7,11 +7,9 @@ import kotlin.system.measureTimeMillis
 class PrivateChatService(
     private val client: OllamaChatClient,
     private val model: String,
+    private val limits: PrivateChatLimits,
+    private val llmSettings: PrivateChatLlmSettings,
 ) {
-
-    private val maxMessages = 20
-    private val maxMessageChars = 2_000
-    private val maxTotalContextChars = 12_000
 
     suspend fun chat(
         request: PrivateChatRequest,
@@ -19,7 +17,7 @@ class PrivateChatService(
         val messages = request.messages
             .map { it.copy(content = it.content.trim()) }
             .filter { it.content.isNotBlank() }
-            .takeLast(maxMessages)
+            .takeLast(limits.maxMessages)
 
         validateMessages(messages)
 
@@ -46,9 +44,9 @@ class PrivateChatService(
         val durationMs = measureTimeMillis {
             val response = client.chat(
                 messages = ollamaMessages,
-                temperature = 0.3,
-                maxTokens = 700,
-                contextWindow = 4096,
+                temperature = llmSettings.temperature,
+                maxTokens = llmSettings.maxTokens,
+                contextWindow = llmSettings.contextWindow,
             )
 
             answer = response.message?.content.orEmpty().trim()
@@ -74,14 +72,14 @@ class PrivateChatService(
                 throw IllegalArgumentException("message role must be user or assistant")
             }
 
-            if (message.content.length > maxMessageChars) {
+            if (message.content.length > limits.maxMessageChars) {
                 throw IllegalArgumentException("single message is too long")
             }
         }
 
         val totalChars = messages.sumOf { it.content.length }
 
-        if (totalChars > maxTotalContextChars) {
+        if (totalChars > limits.maxTotalContextChars) {
             throw IllegalArgumentException("context is too long")
         }
     }

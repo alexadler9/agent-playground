@@ -25,3 +25,12 @@ data class PrivateChatResponse(
 data class PrivateChatErrorResponse(
     val error: String,
 )
+
+@Serializable
+data class PrivateChatHealthResponse(
+    val status: String,
+    val model: String,
+    val maxMessages: Int,
+    val maxTotalContextChars: Int,
+    val maxRequests: Int,
+)

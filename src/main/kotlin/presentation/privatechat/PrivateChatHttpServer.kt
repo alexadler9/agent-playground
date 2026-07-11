@@ -3,6 +3,8 @@ package presentation.privatechat
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import domain.privatechat.PrivateChatErrorResponse
+import domain.privatechat.PrivateChatHealthResponse
+import domain.privatechat.PrivateChatLimits
 import domain.privatechat.PrivateChatRequest
 import domain.privatechat.PrivateChatService
 import kotlinx.coroutines.runBlocking
@@ -17,11 +19,13 @@ class PrivateChatHttpServer(
     private val expectedToken: String,
     private val json: Json,
     private val chatService: PrivateChatService,
+    private val model: String,
+    private val limits: PrivateChatLimits,
 ) {
 
     private val rateLimiter = SimpleRateLimiter(
-        maxRequests = 10,
-        windowMs = 60_000,
+        maxRequests = limits.maxRequests,
+        windowMs = limits.rateLimitWindowMs,
     )
 
     private val server: HttpServer = HttpServer.create(
@@ -60,7 +64,15 @@ class PrivateChatHttpServer(
         sendJson(
             exchange = exchange,
             statusCode = 200,
-            body = """{"status":"ok"}""",
+            body = json.encodeToString(
+                PrivateChatHealthResponse(
+                    status = "ok",
+                    model = model,
+                    maxMessages = limits.maxMessages,
+                    maxTotalContextChars = limits.maxTotalContextChars,
+                    maxRequests = limits.maxRequests,
+                ),
+            ),
         )
     }
 
