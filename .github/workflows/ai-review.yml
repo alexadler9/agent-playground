@@ -1,0 +1,171 @@
+name: AI Review
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.event.repository.name }}
+      REF_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || github.event.pull_request.base.ref }}
+      PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+      BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha }}
+      ASSISTANT_REPOSITORY: alexadler9/assistant-cli
+      ASSISTANT_REF: main
+
+    steps:
+      - name: Checkout assistant-cli
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ASSISTANT_REPOSITORY }}
+          ref: ${{ env.ASSISTANT_REF }}
+          path: assistant-cli
+          token: ${{ secrets.ASSISTANT_CLI_TOKEN || github.token }}
+
+      - name: Restore RAG index cache
+        uses: actions/cache/restore@v4
+        with:
+          path: assistant-cli/.assistant/storage
+          key: assistant-rag-${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.BASE_SHA }}
+          restore-keys: |
+            assistant-rag-${{ github.repository_owner }}-${{ github.event.repository.name }}-
+
+      - name: Check RAG index
+        run: |
+          if ! find assistant-cli/.assistant/storage -name rag-index.json | grep -q rag-index.json; then
+            echo "RAG index is missing."
+            echo "Run the AI Index workflow first."
+            exit 1
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: assistant-cli/**/*.gradle*
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          sleep 5
+          ollama pull bge-m3
+
+      - name: Create assistant config
+        working-directory: assistant-cli
+        run: |
+          cat > assistant.config.json <<EOF
+          {
+            "repository": {
+              "provider": "github",
+              "owner": "${OWNER}",
+              "name": "${REPO}",
+              "ref": "${REF_NAME}",
+              "include": [
+                "README.md",
+                "docs/**/*.md",
+                ".github/workflows/**/*.yml",
+                ".github/workflows/**/*.yaml",
+                "build.gradle.kts",
+                "settings.gradle.kts",
+                "gradle.properties",
+                "gradle/**/*.toml",
+                "gradle/**/*.properties",
+                "src/**/*.kt",
+                "src/**/*.java",
+                "src/**/*.kts",
+                "src/**/*.js",
+                "src/**/*.ts",
+                "src/**/*.html",
+                "src/**/*.css",
+                "tools/**/*.mjs",
+                "tools/**/*.js",
+                "tools/**/*.json",
+                "deploy/**/*.md",
+                "*.md"
+              ],
+              "exclude": [
+                ".git/**",
+                ".idea/**",
+                ".gradle/**",
+                "build/**",
+                "out/**",
+                ".assistant/**",
+                "**/*.class",
+                "**/*.jar",
+                "**/*.zip",
+                "**/*.env",
+                "**/private-ai-service.env"
+              ]
+            },
+            "mcp": {
+              "servers": {
+                "github": {
+                  "transport": "stdio",
+                  "command": "node",
+                  "args": ["tools/github-mcp-server/src/server.mjs"],
+                  "env": {
+                    "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+                  }
+                }
+              }
+            },
+            "storage": {
+              "path": ".assistant/storage"
+            },
+            "sync": {
+              "mode": "snapshot-and-index"
+            },
+            "llm": {
+              "provider": "deepseek",
+              "model": "deepseek-chat",
+              "baseUrl": "https://api.deepseek.com/",
+              "apiKeyEnv": "DEEPSEEK_API_KEY"
+            },
+            "embeddings": {
+              "provider": "ollama",
+              "model": "bge-m3",
+              "baseUrl": "http://localhost:11434/"
+            }
+          }
+          EOF
+
+      - name: Build assistant-cli
+        working-directory: assistant-cli
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --console=plain -q build
+
+      - name: Publish AI review
+        working-directory: assistant-cli
+        run: |
+          ./gradlew --no-daemon --console=plain -q run --args="review-pr --number ${PR_NUMBER} --publish"
