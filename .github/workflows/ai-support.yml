@@ -3,10 +3,7 @@ name: AI Support
 on:
   issues:
     types:
-      - opened
-      - edited
       - labeled
-      - reopened
   issue_comment:
     types:
       - created
@@ -32,10 +29,21 @@ jobs:
         contains(github.event.issue.labels.*.name, 'support') &&
         github.actor != 'github-actions[bot]' &&
         (
-          github.event_name != 'issue_comment' ||
-          !contains(github.event.comment.body, '<!-- ai-support-assistant -->')
+          (
+            github.event_name == 'issues' &&
+            github.event.action == 'labeled' &&
+            github.event.label.name == 'support'
+          ) ||
+          (
+            github.event_name == 'issue_comment' &&
+            !contains(github.event.comment.body, '<!-- ai-support-assistant -->')
+          )
         )
       )
+
+    concurrency:
+      group: ai-support-${{ github.event.issue.number || inputs.issue_number }}
+      cancel-in-progress: true
 
     env:
       GITHUB_TOKEN: ${{ github.token }}
