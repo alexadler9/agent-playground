@@ -141,7 +141,7 @@ jobs:
       - name: Build RAG index
         working-directory: assistant-cli
         run: |
-          ./gradlew --no-daemon --console=plain -q run --args="/sync"
+          ./gradlew --no-daemon --console=plain -q run --args="index-repository"
 
       - name: Save RAG index cache
         uses: actions/cache/save@v4
